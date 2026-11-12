@@ -63,6 +63,7 @@ criterion.workspace = true
 clack-host = { workspace = true, features = ["clack-plugin"] }
 clack-extensions = { workspace = true, features = ["clack-host"] }
 libloading.workspace = true
+plugin-host-core = { workspace = true, features = ["editor"] }
 tempfile.workspace = true
 vst3-host = { workspace = true, features = ["editor"] }
 

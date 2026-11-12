@@ -41,8 +41,6 @@ pub enum EditorError {
     InvalidScaleFactor,
     /// The window was destroyed and cannot accept further operations.
     Closed,
-    /// Native removal must be retried after the current Iced callback returns.
-    CallbackActive,
     /// The host declined an editor-originated resize.
     ResizeDenied,
     /// The editor's owned task worker could not be started.
@@ -60,7 +58,6 @@ impl fmt::Display for EditorError {
             Self::WrongThread => formatter.write_str("the editor must be operated on its native UI thread"),
             Self::InvalidScaleFactor => formatter.write_str("the editor content scale must be positive and finite"),
             Self::Closed => formatter.write_str("the embedded editor has been closed"),
-            Self::CallbackActive => formatter.write_str("retry editor removal after the active UI callback returns"),
             Self::ResizeDenied => formatter.write_str("the host declined the editor resize"),
             Self::Executor(error) => write!(formatter, "could not start editor tasks: {error}"),
             Self::Native(error) => write!(formatter, "could not operate the embedded Iced editor: {error}"),
@@ -144,6 +141,8 @@ impl Editor {
         }
         // SAFETY: The caller guarantees the parent's native type and lifetime for this editor.
         let native_parent = unsafe { native::NativeParent::new(parent)? };
+        #[cfg(windows)]
+        let size = native_parent.initial_size(size, fallback_scale);
         // SAFETY: NativeParent validated the same host pointer and UI thread above.
         let children = unsafe { child::ChildrenBefore::capture(parent)? };
         let analysis = Rc::new(RefCell::new(None));

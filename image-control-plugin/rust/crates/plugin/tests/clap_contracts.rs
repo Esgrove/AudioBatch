@@ -100,13 +100,10 @@ fn packaged_parameter_metadata_and_plain_conversions() -> Result<()> {
     let mut instance = host::load(&bundle)?;
     let handle = instance.plugin_handle();
     let has_gui = handle.get_extension::<PluginGui>().is_some();
-    if cfg!(windows) {
-        ensure!(
-            !has_gui,
-            "Win32 CLAP must not advertise the unsafe reentrant destroy lifecycle"
-        );
-    } else if cfg!(feature = "editor") {
-        ensure!(has_gui, "macOS packaged CLAP must expose the shared native editor");
+    if cfg!(feature = "editor") {
+        ensure!(has_gui, "packaged CLAP must expose the shared native editor");
+    } else {
+        ensure!(!has_gui, "headless CLAP must not advertise a native editor");
     }
     let params = handle.get_extension::<PluginParams>().context("CLAP params")?;
     ensure!(params.count(&handle) == 31, "exact append-only 31-parameter contract");

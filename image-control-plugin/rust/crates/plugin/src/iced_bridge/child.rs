@@ -122,8 +122,8 @@ impl ChildLease {
     /// Synchronously removes this editor child from its host, once, on its owning UI thread.
     /// The lease and baseview window must both remain alive through any reentrant native callbacks.
     /// This does not destroy an active native handler or consume a borrowed baseview window.
-    /// On Windows, the bridge must reject removal during an active Iced callback or geometry flush first.
     /// Hiding or reparenting can synchronously deliver focus or DPI events to the child's native handler.
+    /// The pinned Iced runtime defers nested polling while its program is already borrowed.
     /// Windows failures are reported and permit a later retry. No host child other than this one is touched.
     #[expect(
         unsafe_code,
@@ -151,8 +151,7 @@ impl ChildLease {
             if unsafe { IsWindow(self.child) } == 0 {
                 return Ok(());
             }
-            // SAFETY: The bridge admits this Win32 operation only outside active Iced/geometry callbacks.
-            // Focus-loss notifications may synchronously enter the now-unborrowed native handler.
+            // SAFETY: Baseview retains active dispatch storage and the pinned Iced runtime defers nested polling.
             unsafe { ShowWindow(self.child, SW_HIDE) };
             // SAFETY: Reparenting this child to the system's message-only root removes host ancestry
             // without creating a replacement window or modifying the host's procedure or styles.

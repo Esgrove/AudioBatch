@@ -86,7 +86,6 @@ impl ViewUpdates {
         if !self.active.get() && self.editor.borrow().is_none() {
             return Ok(());
         }
-        removal_admission(cfg!(windows), self.callback_depth.get(), self.flushing.get())?;
         self.active.set(false);
         self.size.set(None);
         self.scale.set(None);
@@ -131,20 +130,6 @@ impl ViewUpdates {
     }
 }
 
-/// Hiding or reparenting a focused Win32 child can synchronously deliver focus/DPI messages into Iced.
-/// Reject before changing any lifecycle or pending work, rather than claiming successful asynchronous removal.
-const fn removal_admission(
-    windows: bool,
-    callback_depth: usize,
-    flushing: bool,
-) -> Result<(), crate::iced_bridge::EditorError> {
-    if windows && (callback_depth != 0 || flushing) {
-        Err(crate::iced_bridge::EditorError::CallbackActive)
-    } else {
-        Ok(())
-    }
-}
-
 impl Drop for HostCall {
     /// Scheduling remains deferred after the final host return, rather than flushing inside the Iced update.
     fn drop(&mut self) {
@@ -162,41 +147,8 @@ impl Drop for ViewUpdates {
 
 #[cfg(test)]
 mod tests {
-    use super::{ViewUpdates, removal_admission};
-    #[cfg(not(windows))]
+    use super::ViewUpdates;
     use std::rc::Rc;
-
-    #[test]
-    fn win32_removal_requires_an_unborrowed_ui_turn() {
-        for (depth, flushing) in [(1, false), (0, true), (2, true)] {
-            assert!(matches!(
-                removal_admission(true, depth, flushing),
-                Err(crate::iced_bridge::EditorError::CallbackActive)
-            ));
-            assert!(removal_admission(false, depth, flushing).is_ok());
-        }
-        assert!(removal_admission(true, 0, false).is_ok());
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn rejected_win32_removal_preserves_ownership_and_pending_geometry_until_retry() {
-        let updates = ViewUpdates::new();
-        updates.active.set(true);
-        updates.size.set(Some((900, 700)));
-        let call = updates.host_call();
-        assert!(updates.remove().is_err());
-        assert!(updates.active.get());
-        assert_eq!(updates.size.get(), Some((900, 700)));
-        drop(call);
-        updates.flushing.set(true);
-        assert!(updates.remove().is_err());
-        assert!(updates.active.get());
-        updates.flushing.set(false);
-        updates.remove().expect("retry outside Iced callback");
-        assert!(!updates.active.get());
-        assert_eq!(updates.size.get(), None);
-    }
 
     #[test]
     fn nested_host_calls_keep_geometry_pending_until_the_outer_callback_returns() {
@@ -218,7 +170,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn reentrant_host_removal_cancels_geometry_synchronously() {
         let updates = ViewUpdates::new();
         updates.active.set(true);
@@ -234,7 +185,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn native_flush_does_not_postpone_removal_to_another_ui_turn() {
         let updates = ViewUpdates::new();
         updates.active.set(true);

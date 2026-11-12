@@ -363,9 +363,6 @@ impl UiState {
             binding.close();
         }
         if let Some(editor) = editor {
-            // A CLAP destroy callback has no retry result.
-            // The existing bridge's Win32 reentrant removal limitation still applies:
-            // hosts must destroy on an unborrowed native UI turn.
             let _ = editor.close();
         }
     }

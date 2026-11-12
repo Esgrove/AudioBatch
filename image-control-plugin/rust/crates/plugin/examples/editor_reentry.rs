@@ -8,6 +8,10 @@ use anyhow::{Context as _, Result, bail, ensure};
 #[path = "support/artifacts.rs"]
 mod artifacts;
 
+#[cfg(windows)]
+#[path = "support/editor_reentry_windows.rs"]
+mod native_windows;
+
 #[cfg(target_os = "macos")]
 #[expect(
     unsafe_code,
@@ -1351,21 +1355,43 @@ mod native {
     }
 }
 
-/// Parses the explicit packaged path before touching `AppKit` or loading a plugin. Help has no native side effects.
-fn arguments() -> Result<Option<PathBuf>> {
+/// Selects an exact artifact and a separately reported Windows reentry boundary.
+struct Options {
+    /// Validated build-tree bundle, never an installed plugin.
+    bundle: PathBuf,
+    /// Exercises the upstream runtime's response to a nested native event loop.
+    nested_events: bool,
+    /// Requires successful native retirement from the active parameter callback.
+    synchronous_removal: bool,
+}
+
+/// Parses the explicit packaged path before touching native resources. Help has no native side effects.
+fn arguments() -> Result<Option<Options>> {
     let mut arguments = std::env::args_os().skip(1);
     let mut bundle = None;
+    let mut nested_events = true;
+    let mut synchronous_removal = false;
     while let Some(argument) = arguments.next() {
         match argument.to_str() {
             Some("-h" | "--help") => {
                 println!(
-                    "Usage: editor_reentry --bundle <absolute-build-tree.vst3>\n\
+                    "Usage: editor_reentry --bundle <absolute-build-tree.vst3> [--case nested-dispatch|removal-retry|synchronous-removal]\n\
 Runs native-editor-reentry against the actual packaged ImageControl RS editor.\n\
-Requires macOS native event delivery. No installed plugins, audio devices, or screenshots are used."
+Requires macOS or Windows native event delivery. No installed plugins, audio devices, or screenshots are used.\n\
+Windows defaults to nested-dispatch; removal-retry isolates callback rejection without a nested event loop."
                 );
                 return Ok(None);
             }
             Some("--bundle") => bundle = Some(PathBuf::from(arguments.next().context("--bundle needs a path")?)),
+            Some("--case") => {
+                let case = arguments.next().context("--case needs a name")?;
+                synchronous_removal = case == "synchronous-removal";
+                nested_events = match case.to_str() {
+                    Some("nested-dispatch" | "synchronous-removal") => true,
+                    Some("removal-retry") => false,
+                    _ => bail!("unknown native reentry case: {}", case.to_string_lossy()),
+                };
+            }
             _ => bail!("unknown argument: {}", argument.to_string_lossy()),
         }
     }
@@ -1375,19 +1401,30 @@ Requires macOS native event delivery. No installed plugins, audio devices, or sc
         bundle.is_dir() && bundle.extension().is_some_and(|extension| extension == "vst3"),
         "expected a packaged .vst3 directory"
     );
-    Ok(Some(bundle))
+    #[cfg(not(windows))]
+    ensure!(nested_events && !synchronous_removal, "selected case is Windows-only");
+    Ok(Some(Options {
+        bundle,
+        nested_events,
+        synchronous_removal,
+    }))
 }
 
 /// Runs one fail-closed native UI regression process, not an audio or `RealtimeSanitizer` scenario.
 fn main() -> Result<()> {
-    let Some(bundle) = arguments()? else {
+    let Some(options) = arguments()? else {
         return Ok(());
     };
     #[cfg(target_os = "macos")]
-    return native::run(&bundle);
-    #[cfg(not(target_os = "macos"))]
     {
-        let _ = bundle;
+        let _ = (options.nested_events, options.synchronous_removal);
+        return native::run(&options.bundle);
+    }
+    #[cfg(windows)]
+    return native_windows::run(&options.bundle, options.nested_events, options.synchronous_removal);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = options;
         bail!("native-editor-reentry is unsupported on this platform, native HWND event delivery is not implemented")
     }
 }
