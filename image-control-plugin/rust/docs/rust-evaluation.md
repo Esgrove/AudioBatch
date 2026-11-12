@@ -76,11 +76,17 @@ Both profiles were subsequently rebuilt with `--test --validate`, passing packag
 all 303 plugin library tests, and pluginval strictness 5 after this repair.
 Strict lint and formatting also passed.
 This verifies the exercised initial geometry, not genuine multi-monitor DPI transitions.
-The earlier Debug/Release callback passes precede this geometry repair.
-Its callback repeats stopped before pointer delivery after the desktop locked:
-CLAP identified the covering `LockScreenBackstopFrame` window.
-Post-repair callback qualification remains blocked, and no lock-screen input bypass was attempted.
-The unmatched editor smoke reports are retained as diagnostics, not performance comparisons.
+Initial callback repeats stopped before pointer delivery after the desktop locked:
+CLAP identified the covering `LockScreenBackstopFrame` window, and no input bypass was attempted.
+Subsequent unobstructed post-repair repetitions passed in both Debug and Release:
+three VST3 synchronous-removal cycles, three nested-dispatch cycles,
+three ordinary CLAP lifecycle cycles, and three active callback-destruction cycles per profile.
+The original native child retired and gesture starts and ends balanced in every exercised callback case.
+CLAP observed its 1000 by 764 physical child at DPI 120.
+These probes do not establish another DPI configuration.
+Logs and tested-module SHA-256 manifests are retained in `rust/target/benchmark/windows-post-dpi-U2YZjUl4/`,
+relative to the plugin directory.
+The earlier unmatched editor smokes remain diagnostics, not performance comparisons.
 
 ### Windows Application Hosts: 12 November 2026
 
@@ -165,9 +171,10 @@ Raw samples, exact bundle/host identities,
 and min/median/max summaries are retained in `rust/target/benchmark/windows-preparation-matched-zBRCMkVL/`,
 relative to the plugin directory.
 The seven focused evidence contracts pass, including finite preparation timings and unchanged non-timing determinism.
-The full benchmark-script suite remains blocked by six existing Windows shell-mock failures:
-native paths in generated shebangs and Git launcher's PATH rewriting prevent faithful command isolation.
-Exploratory harness changes were withdrawn rather than weakening those tests.
+The complete 16-case benchmark-script suite passes on Windows.
+Its shell fixtures use valid POSIX shebangs, LF newlines, and wrappers around Git's original executables.
+Native path conversion preserves invocation-relative targets and quoted paths.
+Production argument validation precedes Windows path-tool queries, with failure-propagation assertions retained.
 
 Separate candidate-only Criterion runs used 100 samples after three seconds of warmup at each rate.
 At 44.1/48/96/192 kHz, preparation point estimates were 2.671/2.548/5.098/10.332 milliseconds.
@@ -191,6 +198,35 @@ Raw reports and validated summaries are in `rust/target/benchmark/windows-render
 The C++ benchmark retires pending warmup query bookkeeping before resetting measured frame identities.
 The exact duplicate-index regression and subsequent paired matrix passed strict report validation.
 
+The native editor capture contains 60 reports: five counterbalanced repetitions of C++, preserved RS baseline,
+and current RS for default, solid, continuous persistence/contrast, and maximized layouts.
+Each fresh process has two seconds of warmup and five measured seconds with concurrent paced stereo callbacks.
+The host explicitly requests constrained physical size after attachment, without changing the preserved baseline.
+All native observations were visible, not minimized, and exactly 1250 by 955 physical pixels at 125% scale,
+or 1000 by 764 logical pixels.
+RS baseline/current renderer plots matched at 1190 by 339 pixels, or 1226 by 371 in maximized layout.
+The C++ telemetry does not expose equivalent plot dimensions or native encoding endpoints.
+
+| Case | C++ Counter Observations/s Median (Range) | RS Baseline Encodings/s Median (Range) | RS Current Encodings/s Median (Range) |
+| --- | --- | --- | --- |
+| Default | 139.24 (138.87-140.84) | 39.6 (39.2-40.2) | 40.0 (39.4-40.2) |
+| Solid | 139.60 (139.03-141.00) | 39.6 (39.2-39.6) | 39.6 (39.2-40.0) |
+| Persistence/contrast | 139.24 (139.01-141.21) | 39.2 (38.6-40.0) | 39.4 (39.2-40.0) |
+| Maximized | 139.85 (139.03-141.23) | 39.2 (38.8-40.0) | 39.4 (38.6-40.0) |
+
+These are different timestamp boundaries, not measured display FPS or directly equivalent encoding rates.
+Windows occlusion, GPU completion, and physical scanout remain unknown.
+The median of per-run RS encoding p50 values was 8.0-9.1 microseconds across these cases.
+The median callback p50 was 55.7-60.4 microseconds for RS and 209.3-299.3 for C++.
+Callback-lateness p95 medians were separately 1.69-1.85 milliseconds.
+These concurrent editor/processing observations are not isolated DSP costs or audio-device deadline guarantees.
+All RS before/after rate ranges overlap.
+No improvement is established.
+Raw reports, exact module and host hashes,
+the uncommitted host-source patch, protocol, and spreads are retained in
+`rust/target/benchmark/windows-editor-matched-L7j2PKUm/`, relative to the plugin directory.
+Input hashes remained unchanged through capture, and the complete artifact checksum inventory verifies.
+
 The workflow includes bounded packaged-processing workloads
 and an opt-in interactive Windows native job selected with `windows_native_runner`.
 That job validates four native GPU reports with the reproduced 30-warmup/120-measured-frame query workload
@@ -198,8 +234,8 @@ before running Debug and Release editor probes.
 The exact GPU invocation passed locally after rebuilding the touched C++ targets.
 Native failures retain their raw logs.
 The workflow schema validates locally, but the new jobs have not been qualified remotely.
-Remaining gates include post-DPI-repair callback repeats, broader native input and DPI,
-actual application GUI workflows, matched editor and isolated C++/baseline analysis measurements, renderer failure recovery,
+Remaining gates include broader native input and DPI, actual application GUI workflows,
+isolated C++/baseline analysis measurements, renderer failure recovery,
 upstream widget-cache reclamation, and arbitrary module unloading.
 
 ## Recommendation
