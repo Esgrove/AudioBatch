@@ -381,6 +381,14 @@ struct EditorObservation {
 /// Keeps the native window shown, pumps real host events, and destroys the editor on its opening thread.
 fn observe_editor(ui: &UiThread, instance: &PluginInstance, options: &Options) -> Result<EditorObservation> {
     let editor = EditorWindow::open(ui, instance, "ImageControl visible benchmark", None, None)?;
+    #[cfg(windows)]
+    {
+        let observation = editor.native_observation(ui)?;
+        let mut size = observation.physical_size;
+        size.width = (f64::from(options.width) * observation.content_scale).round() as i32;
+        size.height = (f64::from(options.height) * observation.content_scale).round() as i32;
+        editor.set_content_size(ui, size);
+    }
     let warmup_end = Instant::now() + Duration::from_secs_f64(options.warmup);
     while Instant::now() < warmup_end {
         ensure!(!editor.is_closed(), "editor closed during warmup");
