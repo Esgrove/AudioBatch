@@ -80,13 +80,13 @@ run_miri() {
 
     # In-process CLAP lifecycle tests use the same process-lifetime UI dispatcher.
     # Native module loading tests are explicitly ignored under Miri, never dynamically loaded here.
-    # Upstream clack 0.2.0 passes &mut OutputEvents across its C ABI as *const clap_output_events, which needs Tree Borrows.
-    print_magenta "Running in-process CLAP fixture contracts under Miri..."
-    MIRIFLAGS="${MIRIFLAGS:+$MIRIFLAGS }-Zmiri-tree-borrows" \
-        cargo +nightly miri nextest run --no-fail-fast -p audiobatch-test-clap-plugin --test contracts
+    # Clack 0.2.0's output-event adapters currently violate strict Stacked Borrows.
+    # Keep the contracts enabled and their failures nonzero, without relaxing aliasing checks.
+    print_magenta "Running strict in-process CLAP fixture contracts, known Clack 0.2.0 blocker remains a failure..."
+    cargo +nightly miri nextest run --no-fail-fast -p audiobatch-test-clap-plugin --test contracts
 
-    print_magenta "Running in-process CLAP host contracts under Miri..."
-    MIRIFLAGS="${MIRIFLAGS:+$MIRIFLAGS }-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
+    print_magenta "Running strict in-process CLAP host contracts, known Clack 0.2.0 blocker remains a failure..."
+    MIRIFLAGS="${MIRIFLAGS:+$MIRIFLAGS }-Zmiri-ignore-leaks" \
         cargo +nightly miri nextest run --no-fail-fast -p clap-host --test contracts --test request_delivery
 
     # Only the core modules that decode cache blobs run, because the rest of the core decodes audio files,
