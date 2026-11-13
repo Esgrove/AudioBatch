@@ -12,12 +12,10 @@
 #include "Parameters.h"
 #include "ProcessingState.h"
 #include "UserPresets.h"
-#include <system_error>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -120,14 +118,7 @@ void sanitizeParameterState(juce::ValueTree state, const juce::AudioProcessorVal
     for (auto child : state) {
         if (const auto* parameter = parameters.getParameter(child.getProperty("id").toString())) {
             const auto text = child.getProperty("value").toString().trim().toStdString();
-            const std::span<const char> characters(text.data(), text.size());
-            const auto number = !characters.empty() && characters.front() == '+' ? characters.subspan(1) : characters;
-            const auto* last = std::to_address(number.end());
-            float value = 0.0F;
-            const auto parsed = std::from_chars(number.data(), last, value);
-            if (parsed.ec != std::errc {} || parsed.ptr != last || !std::isfinite(value)) {
-                value = plainValue(*parameter);
-            }
+            const float value = parseFiniteFloat(text, true).value_or(plainValue(*parameter));
             child.setProperty("value", static_cast<double>(value), nullptr);
         }
     }

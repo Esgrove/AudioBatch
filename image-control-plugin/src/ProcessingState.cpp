@@ -5,19 +5,15 @@
 
 #include "Parameters.h"
 #include "UserPresets.h"
-#include <system_error>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
-#include <string>
 #include <utility>
 
 namespace esgrove::image_control
@@ -81,20 +77,13 @@ bool isSoundParameter(const juce::String& parameterId)
 std::optional<double> parseValue(const juce::String& text)
 {
     const auto characters = text.toStdString();
-    if (characters.empty()) {
-        return std::nullopt;
-    }
-    double value = 0.0;
-    const std::span<const char> number(characters.data(), characters.size());
-    const auto* end = std::to_address(number.end());
-    const auto parsed = std::from_chars(number.data(), end, value);
-    if (parsed.ec != std::errc {} || parsed.ptr != end || !std::isfinite(value)
-        || value < -static_cast<double>(std::numeric_limits<float>::max())
-        || value > static_cast<double>(std::numeric_limits<float>::max()))
+    const auto parsed = parseFiniteDouble(characters, false);
+    if (!parsed || *parsed < -static_cast<double>(std::numeric_limits<float>::max())
+        || *parsed > static_cast<double>(std::numeric_limits<float>::max()))
     {
         return std::nullopt;
     }
-    return value;
+    return parsed;
 }
 }  // namespace
 

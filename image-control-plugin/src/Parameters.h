@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <string_view>
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
@@ -174,6 +176,8 @@ using BandSolos = std::array<bool, BAND_COUNT>;
 
 [[nodiscard]] BandGains soloGains(const BandSolos& soloed);
 [[nodiscard]] Crossovers orderCrossovers(const Crossovers& requested);
+[[nodiscard]] std::optional<double> parseFiniteDouble(std::string_view token, bool allowLeadingPlus = false);
+[[nodiscard]] std::optional<float> parseFiniteFloat(std::string_view token, bool allowLeadingPlus = false);
 [[nodiscard]] bool sameCrossovers(const Crossovers& first, const Crossovers& second);
 
 [[nodiscard]] float bandGainFromDecibels(float decibels);

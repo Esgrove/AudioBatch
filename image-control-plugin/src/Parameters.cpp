@@ -3,20 +3,20 @@
 
 #include "Parameters.h"
 
-#include <system_error>
+#include <string_view>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <locale>
 #include <memory>
 #include <optional>
-#include <span>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -68,22 +68,53 @@ constexpr std::array<float, CROSSOVER_COUNT> CROSSOVER_UPPER_LIMITS {
 /// Text grammar and host metadata of a finite parameter.
 enum class ParameterKind : std::uint8_t { frequency, gain, pan, width, recovery, boolean };
 
+/// Accepts only strict ASCII decimal floating-point tokens, rejecting whitespace, hex floats, NaN/Inf, and suffixes.
+bool isDecimalFloatToken(const std::string_view token, const bool allowLeadingPlus) noexcept
+{
+    if (token.empty()) {
+        return false;
+    }
+    std::size_t index = 0;
+    if (token[index] == '-' || (allowLeadingPlus && token[index] == '+')) {
+        ++index;
+    }
+    bool hasDigits = false;
+    while (index < token.size() && token[index] >= '0' && token[index] <= '9') {
+        hasDigits = true;
+        ++index;
+    }
+    if (index < token.size() && token[index] == '.') {
+        ++index;
+        while (index < token.size() && token[index] >= '0' && token[index] <= '9') {
+            hasDigits = true;
+            ++index;
+        }
+    }
+    if (!hasDigits) {
+        return false;
+    }
+    if (index < token.size() && (token[index] == 'e' || token[index] == 'E')) {
+        ++index;
+        if (index < token.size() && (token[index] == '+' || token[index] == '-')) {
+            ++index;
+        }
+        bool hasExponentDigits = false;
+        while (index < token.size() && token[index] >= '0' && token[index] <= '9') {
+            hasExponentDigits = true;
+            ++index;
+        }
+        if (!hasExponentDigits) {
+            return false;
+        }
+    }
+    return index == token.size();
+}
+
 /// Parses a whole finite numeric token, rejecting empty input, trailing junk, and overflow.
 std::optional<float> finiteNumber(const juce::String& text)
 {
     const auto token = text.trim().toStdString();
-    if (token.empty()) {
-        return std::nullopt;
-    }
-    const std::span<const char> characters(token.data(), token.size());
-    const auto number = characters.front() == '+' ? characters.subspan(1) : characters;
-    const auto* last = std::to_address(number.end());
-    float result = 0.0F;
-    const auto parsed = std::from_chars(number.data(), last, result);
-    if (parsed.ec != std::errc {} || parsed.ptr != last || !std::isfinite(result)) {
-        return std::nullopt;
-    }
-    return result;
+    return parseFiniteFloat(token, true);
 }
 
 /// Parses an optional pan side or percent suffix without accepting trailing junk.
@@ -594,6 +625,38 @@ bool sameCrossovers(const Crossovers& first, const Crossovers& second)
     return std::ranges::equal(first, second, [](const float left, const float right) {
         return juce::approximatelyEqual(left, right);
     });
+}
+
+/// Parses a strict locale-independent decimal token into a finite double without requiring macOS 26 libc++ symbols.
+std::optional<double> parseFiniteDouble(const std::string_view token, const bool allowLeadingPlus)
+{
+    if (!isDecimalFloatToken(token, allowLeadingPlus)) {
+        return std::nullopt;
+    }
+    const auto normalized = !token.empty() && token.front() == '+' ? token.substr(1) : token;
+    std::istringstream stream {std::string(normalized)};
+    stream.imbue(std::locale::classic());
+    double result = 0.0;
+    if (!(stream >> result) || stream.peek() != std::char_traits<char>::eof() || !std::isfinite(result)) {
+        return std::nullopt;
+    }
+    return result;
+}
+
+/// Parses a strict locale-independent decimal token into a finite float without requiring macOS 26 libc++ symbols.
+std::optional<float> parseFiniteFloat(const std::string_view token, const bool allowLeadingPlus)
+{
+    if (!isDecimalFloatToken(token, allowLeadingPlus)) {
+        return std::nullopt;
+    }
+    const auto normalized = !token.empty() && token.front() == '+' ? token.substr(1) : token;
+    std::istringstream stream {std::string(normalized)};
+    stream.imbue(std::locale::classic());
+    float result = 0.0F;
+    if (!(stream >> result) || stream.peek() != std::char_traits<char>::eof() || !std::isfinite(result)) {
+        return std::nullopt;
+    }
+    return result;
 }
 
 /// Returns the plain value of a parameter, such as a frequency in Hz or a gain in dB.

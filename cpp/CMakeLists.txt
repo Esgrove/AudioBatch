@@ -12,6 +12,9 @@ if(CMAKE_HOST_APPLE
 )
     set(CMAKE_OSX_SYSROOT macosx CACHE STRING "macOS SDK" FORCE)
 endif()
+if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
+endif()
 
 project(
     "AudioBatch"
