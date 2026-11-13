@@ -178,6 +178,15 @@ impl RendererAccess {
         }
     }
 
+    /// Settles the captured insert commands with retirement space available, without dropping inserts under exclusion.
+    /// The retire queue holds more entries than the entire command queue, so one application pass suffices.
+    fn flush_insert_changes(&self, insert: &mut InsertControl) -> Vec<Box<dyn PreviewInsert>> {
+        let mut retired = insert.take_retired();
+        self.renderer.with_control(OutputRenderer::apply_insert_changes);
+        retired.extend(insert.take_retired());
+        retired
+    }
+
     /// Advances the stream identity only after every earlier admitted render callback has returned.
     /// A delayed callback checks its epoch after admission and cannot consume replacement-stream audio.
     fn advance_epoch(&self) -> u64 {
@@ -550,10 +559,7 @@ impl Player {
     /// Forces any queued insert changes to settle on the control thread and returns retired inserts.
     /// Safe to call when a paused or stalled stream has not serviced the queue on its own.
     pub fn flush_insert_changes(&mut self) -> Vec<Box<dyn PreviewInsert>> {
-        self.renderer
-            .renderer
-            .with_control(OutputRenderer::apply_insert_changes);
-        self.insert.take_retired()
+        self.renderer.flush_insert_changes(&mut self.insert)
     }
 
     /// Returns the inserts the audio callback replaced since the last call,
