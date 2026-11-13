@@ -221,6 +221,22 @@ impl SettingsView {
         view
     }
 
+    /// Tests membership through the production selector's value lookup without emitting a device-change event.
+    #[cfg(all(test, target_os = "macos"))]
+    pub fn test_has_output_device(&self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.device_select.update(cx, |state, cx| {
+            let previous = state.selected_value().cloned();
+            state.set_selected_value(&SharedString::from(name), window, cx);
+            let found = state.selected_value().is_some_and(|value| value.as_ref() == name);
+            if let Some(previous) = previous {
+                state.set_selected_value(&previous, window, cx);
+            } else {
+                state.set_selected_index(None, window, cx);
+            }
+            found
+        })
+    }
+
     /// Shows a snapshot: the devices and the choices of the open device, and the saved preferences.
     pub fn sync(&mut self, snapshot: &SettingsSnapshot, window: &mut Window, cx: &mut Context<Self>) {
         self.settings = snapshot.settings.clone();

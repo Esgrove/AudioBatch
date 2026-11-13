@@ -367,6 +367,8 @@ impl AppView {
             loop {
                 cx.background_executor().timer(PLAYER_POLL_INTERVAL).await;
                 let alive = this.update(cx, |view, cx| {
+                    #[cfg(target_os = "macos")]
+                    view.poll_output_devices(Instant::now(), cx);
                     if let Some(player) = view.player.as_mut() {
                         player.close_idle_stream();
                     }
