@@ -10,6 +10,9 @@ use super::k_weighting::KWeighting;
 /// Energy at the absolute gate of -70 LUFS, including the BS.1770 calibration offset.
 const ABSOLUTE_GATE: f64 = 0.000_000_117_246_530_458_229_81;
 
+/// Upper bound on upfront block reservations from untrusted container frame counts.
+const MAXIMUM_RESERVED_BLOCKS: usize = 65_536;
+
 /// Streaming loudness for aligned 100 ms planes, with a final partial update.
 pub struct LoudnessMeter {
     filter: KWeighting,
@@ -24,10 +27,13 @@ pub struct LoudnessMeter {
 }
 
 impl LoudnessMeter {
-    /// Creates empty windows and reserves the integrated history from the expected stream length.
+    /// Creates empty windows and reserves a bounded integrated history from the expected stream length.
     pub fn new(channels: usize, sample_rate: u32, expected_frames: Option<u64>) -> Self {
         let block_size = ((sample_rate as usize + 5) / 10).max(1);
         let capacity = expected_frames.map_or(0, |frames| frames / block_size as u64);
+        let reserved = usize::try_from(capacity)
+            .unwrap_or(MAXIMUM_RESERVED_BLOCKS)
+            .min(MAXIMUM_RESERVED_BLOCKS);
         Self {
             filter: KWeighting::new(channels, sample_rate),
             block_size,
@@ -35,7 +41,7 @@ impl LoudnessMeter {
             boundary_energy: vec![0.0; block_size * 30],
             next: 0,
             complete_blocks: 0,
-            integrated: Vec::with_capacity(usize::try_from(capacity).unwrap_or(0)),
+            integrated: Vec::with_capacity(reserved),
             admitted_sum: 0.0,
         }
     }

@@ -20,6 +20,9 @@ use crate::waveform::{WaveformBuilder, WaveformOverview};
 /// Largest supported channel count, which sizes the fixed per-channel state of every measurement.
 pub(crate) const MAX_CHANNELS: usize = 64;
 
+/// Upper bound on upfront short-term history reservations from untrusted container frame counts.
+const MAXIMUM_RESERVED_HISTORY_POINTS: usize = 65_536;
+
 /// A loudness measurement failure.
 #[doc(hidden)]
 #[derive(Debug, thiserror::Error)]
@@ -101,11 +104,11 @@ impl BlockMeter {
             min_samples: [0.0; MAX_CHANNELS],
             max_samples: [0.0; MAX_CHANNELS],
             max_short_term_lufs: NEGATIVE_INFINITY_LOUDNESS,
-            history: Vec::with_capacity(
-                expected_frames
-                    .and_then(|frames| usize::try_from(frames.div_ceil(block_size as u64)).ok())
-                    .unwrap_or(0),
-            ),
+            history: Vec::with_capacity(expected_frames.map_or(0, |frames| {
+                usize::try_from(frames.div_ceil(block_size as u64))
+                    .unwrap_or(MAXIMUM_RESERVED_HISTORY_POINTS)
+                    .min(MAXIMUM_RESERVED_HISTORY_POINTS)
+            })),
             waveform: WaveformBuilder::new(channel_count, expected_frames),
             spectrogram: (channel_count <= 2).then(|| SpectrogramBuilder::new(channel_count, sample_rate)),
             overloads: OverloadHistoryBuilder::new(channels, sample_rate),

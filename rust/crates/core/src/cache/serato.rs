@@ -46,6 +46,13 @@ const STATE_UNSUPPORTED: i64 = 3;
 /// Stored state of a tag that could not be parsed.
 const STATE_INVALID: i64 = 4;
 
+/// Stored source identity observed in `serato_tag_cache` before updating a row.
+#[derive(Clone, Copy)]
+struct ObservedSeratoIdentity {
+    file_size: i64,
+    modified_time_ms: i64,
+}
+
 impl AnalysisCache {
     /// Returns the cached Serato Overview state of a file, or `None` when the file changed,
     /// the row is from another parser version, or the stored overview is invalid.
@@ -57,36 +64,35 @@ impl AnalysisCache {
         } = file_identity(path)?;
         self.with_connection(|connection| {
             Ok(connection
-                .query_row(
+                .prepare_cached(
                     "SELECT file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms
                          FROM serato_tag_cache WHERE file_path = ?1 AND tag_kind = ?2",
-                    params![path_key(path), OVERVIEW_TAG_KIND],
-                    |row| {
-                        if row.get::<_, i64>(0)? != i64::try_from(file_size).unwrap_or(-1)
-                            || row.get::<_, i64>(1)? != modified_time_ms
-                            || row.get::<_, i64>(2)? != i64::from(OVERVIEW_PARSER_VERSION)
-                            || row.get::<_, i64>(5)? <= 0
-                        {
-                            return Ok(None);
-                        }
-                        let state: i64 = row.get(3)?;
-                        if state != STATE_PRESENT && !matches!(row.get_ref(4)?, ValueRef::Null) {
-                            return Ok(None);
-                        }
-                        Ok(match state {
-                            STATE_PRESENT => row
-                                .get_ref(4)?
-                                .as_blob()
-                                .ok()
-                                .and_then(Overview::deserialize)
-                                .map(|overview| SeratoOverviewState::Present(Arc::new(overview))),
-                            STATE_ABSENT => Some(SeratoOverviewState::Absent),
-                            STATE_UNSUPPORTED => Some(SeratoOverviewState::Unsupported),
-                            STATE_INVALID => Some(SeratoOverviewState::Invalid),
-                            _ => None,
-                        })
-                    },
-                )
+                )?
+                .query_row(params![path_key(path), OVERVIEW_TAG_KIND], |row| {
+                    if row.get::<_, i64>(0)? != i64::try_from(file_size).unwrap_or(-1)
+                        || row.get::<_, i64>(1)? != modified_time_ms
+                        || row.get::<_, i64>(2)? != i64::from(OVERVIEW_PARSER_VERSION)
+                        || row.get::<_, i64>(5)? <= 0
+                    {
+                        return Ok(None);
+                    }
+                    let state: i64 = row.get(3)?;
+                    if state != STATE_PRESENT && !matches!(row.get_ref(4)?, ValueRef::Null) {
+                        return Ok(None);
+                    }
+                    Ok(match state {
+                        STATE_PRESENT => row
+                            .get_ref(4)?
+                            .as_blob()
+                            .ok()
+                            .and_then(Overview::deserialize)
+                            .map(|overview| SeratoOverviewState::Present(Arc::new(overview))),
+                        STATE_ABSENT => Some(SeratoOverviewState::Absent),
+                        STATE_UNSUPPORTED => Some(SeratoOverviewState::Unsupported),
+                        STATE_INVALID => Some(SeratoOverviewState::Invalid),
+                        _ => None,
+                    })
+                })
                 .optional()?)
         })
         .ok()
@@ -133,11 +139,15 @@ impl AnalysisCache {
     ) -> Result<bool> {
         let observed_source = self.with_connection(|connection| {
             Ok(connection
-                .query_row(
+                .prepare_cached(
                     "SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ?1 AND tag_kind = ?2",
-                    params![path_key(&record.path), OVERVIEW_TAG_KIND],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-                )
+                )?
+                .query_row(params![path_key(&record.path), OVERVIEW_TAG_KIND], |row| {
+                    Ok(ObservedSeratoIdentity {
+                        file_size: row.get(0)?,
+                        modified_time_ms: row.get(1)?,
+                    })
+                })
                 .optional()?)
         })?;
         if !record.matches_file_on_disk() {
@@ -162,7 +172,7 @@ impl AnalysisCache {
         };
         self.with_connection(|connection| {
             let updated = connection
-                .execute(
+                .prepare_cached(
                     "INSERT INTO serato_tag_cache (
                         file_path, tag_kind, file_size, modified_time_ms, parser_version, result_state,
                         decoded_data, updated_at_ms
@@ -182,7 +192,9 @@ impl AnalysisCache {
                         AND ((serato_tag_cache.file_size != excluded.file_size
                             OR serato_tag_cache.modified_time_ms != excluded.modified_time_ms)
                             OR serato_tag_cache.parser_version <= excluded.parser_version)",
-                    params![
+                )
+                .and_then(|mut statement| {
+                    statement.execute(params![
                         path_key(path),
                         OVERVIEW_TAG_KIND,
                         i64::try_from(file_size).unwrap_or(i64::MAX),
@@ -192,10 +204,10 @@ impl AnalysisCache {
                         data,
                         now_ms(),
                         observed_source.is_some(),
-                        observed_source.map_or(0, |identity| identity.0),
-                        observed_source.map_or(0, |identity| identity.1),
-                    ],
-                )
+                        observed_source.map_or(0, |identity| identity.file_size),
+                        observed_source.map_or(0, |identity| identity.modified_time_ms),
+                    ])
+                })
                 .map_err(CacheError::StoreSerato)?;
             Ok(updated > 0)
         })

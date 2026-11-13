@@ -293,8 +293,10 @@ unsafe extern "C-unwind" fn read_file(
     actual: NonNull<u32>,
 ) -> i32 {
     // SAFETY: AudioFile invokes callbacks synchronously with the stable boxed File supplied at open.
-    // Its output buffer is valid for requested bytes and actual points to writable u32 storage.
+    // Its output buffer is valid and writable for requested bytes, zeroed before forming a byte slice,
+    // and actual points to writable u32 storage.
     let (file, buffer, actual) = unsafe {
+        ptr::write_bytes(buffer.as_ptr().cast::<u8>(), 0, requested as usize);
         (
             file.cast::<File>().as_ref(),
             std::slice::from_raw_parts_mut(buffer.as_ptr().cast::<u8>(), requested as usize),
@@ -333,7 +335,7 @@ unsafe extern "C-unwind" fn file_size(file: NonNull<c_void>) -> i64 {
 }
 
 #[cfg(test)]
-mod tests {
+mod test_native_aac {
     use super::*;
     use crate::decode::AudioFileDecoder;
 

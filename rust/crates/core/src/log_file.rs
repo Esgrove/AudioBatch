@@ -38,7 +38,14 @@ pub const FILE_ONLY_TARGET: &str = "audiobatch::file_only";
 const MAXIMUM_INITIAL_LOG_BYTES: u64 = 32_768;
 
 /// Target prefixes of the `AudioBatch` crates, whose messages are kept below the warning level.
-const OWN_TARGET_PREFIXES: [&str; 4] = ["audiobatch", "AudioBatchRs", "serato_tags", "vst3_host"];
+const OWN_TARGET_PREFIXES: [&str; 6] = [
+    "audiobatch",
+    "AudioBatchRs",
+    "clap_host",
+    "plugin_host_core",
+    "serato_tags",
+    "vst3_host",
+];
 
 /// A failure to open the log, write its banner, or install the global subscriber.
 #[derive(Debug, thiserror::Error)]
@@ -322,6 +329,8 @@ mod test_log_file {
     fn other_crates_are_kept_only_from_the_warning_level() {
         let file = kept_levels(LevelFilter::TRACE);
         assert!(file.would_enable("audiobatch_core::output_file", &Level::INFO));
+        assert!(file.would_enable("clap_host::instance", &Level::INFO));
+        assert!(file.would_enable("plugin_host_core::thread", &Level::INFO));
         assert!(file.would_enable("vst3_host::plugin", &Level::INFO));
         assert!(file.would_enable(FILE_ONLY_TARGET, &Level::INFO));
         assert!(file.would_enable("symphonia_format_riff", &Level::WARN));

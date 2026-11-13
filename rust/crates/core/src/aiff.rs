@@ -203,12 +203,21 @@ impl<W: Write + Seek> AiffWriter<W> {
         let bytes_per_sample = usize::from(self.bits_per_sample / 8);
         self.scratch.clear();
         self.scratch.reserve(frames * planes.len() * bytes_per_sample);
-        for frame in 0..frames {
-            for (channel, plane) in planes.iter().enumerate() {
-                let sample = plane.get(frame).copied().unwrap_or_default();
-                let value = to_int32(channel, sample);
-                let bytes = value.to_be_bytes();
-                self.scratch.extend(bytes.iter().take(bytes_per_sample));
+        if bytes_per_sample == 2 {
+            for frame in 0..frames {
+                for (channel, plane) in planes.iter().enumerate() {
+                    let sample = plane.get(frame).copied().unwrap_or_default();
+                    let bytes = to_int32(channel, sample).to_be_bytes();
+                    self.scratch.extend_from_slice(&bytes[..2]);
+                }
+            }
+        } else {
+            for frame in 0..frames {
+                for (channel, plane) in planes.iter().enumerate() {
+                    let sample = plane.get(frame).copied().unwrap_or_default();
+                    let bytes = to_int32(channel, sample).to_be_bytes();
+                    self.scratch.extend_from_slice(&bytes[..3]);
+                }
             }
         }
         self.writer.write_all(&self.scratch).map_err(AiffError::WriteData)?;

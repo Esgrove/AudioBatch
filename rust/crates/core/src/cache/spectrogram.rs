@@ -150,22 +150,23 @@ impl AnalysisCache {
 /// Removes incompatible revisions only while the just-published measurement identity and geometry still win.
 /// Callers run this best effort after committing required measurements so cleanup cannot roll them back.
 pub(super) fn prune_incompatible(connection: &Connection, record: &AnalysisRecord) -> rusqlite::Result<()> {
-    connection.execute(
-        "DELETE FROM spectrogram_cache WHERE file_path = ?1
+    connection
+        .prepare_cached(
+            "DELETE FROM spectrogram_cache WHERE file_path = ?1
             AND (file_size != ?2 OR modified_time_ms != ?3 OR sample_rate != ?4
                 OR num_channels != ?5 OR length_in_samples != ?6)
             AND EXISTS (SELECT 1 FROM file_analysis AS a WHERE a.file_path = ?1
                 AND a.file_size = ?2 AND a.modified_time_ms = ?3 AND a.sample_rate = ?4
                 AND a.channels = ?5 AND a.length_in_samples = ?6)",
-        params![
+        )?
+        .execute(params![
             path_key(&record.path),
             i64::try_from(record.file_size).unwrap_or(-1),
             record.modified_time_ms,
             record.sample_rate,
             record.channels,
             i64::try_from(record.length_in_samples).unwrap_or(-1),
-        ],
-    )?;
+        ])?;
     Ok(())
 }
 
@@ -185,19 +186,16 @@ fn store_encoded(
     data: &SpectrogramData,
     bytes: &[u8],
 ) -> rusqlite::Result<bool> {
-    Ok(connection.execute(
-        STORE_SQL,
-        params![
-            path_key(&record.path),
-            ALGORITHM_VERSION,
-            SERIALIZATION_VERSION,
-            i64::try_from(record.file_size).unwrap_or(-1),
-            record.modified_time_ms,
-            data.sample_rate(),
-            data.channels(),
-            i64::try_from(data.length_in_frames()).unwrap_or(-1),
-            bytes,
-            ANALYSIS_VERSION,
-        ],
-    )? > 0)
+    Ok(connection.prepare_cached(STORE_SQL)?.execute(params![
+        path_key(&record.path),
+        ALGORITHM_VERSION,
+        SERIALIZATION_VERSION,
+        i64::try_from(record.file_size).unwrap_or(-1),
+        record.modified_time_ms,
+        data.sample_rate(),
+        data.channels(),
+        i64::try_from(data.length_in_frames()).unwrap_or(-1),
+        bytes,
+        ANALYSIS_VERSION,
+    ])? > 0)
 }

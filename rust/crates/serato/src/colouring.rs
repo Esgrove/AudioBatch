@@ -8,7 +8,7 @@
 //! and a column that spans several slices weights each slice by its overlap.
 //! The number of colours is bounded by the visible width, not by the slice count.
 
-use crate::overview::{Overview, Slice};
+use crate::overview::{MAXIMUM_SLICES, Overview, Slice};
 
 /// Most colours computed for one viewport, which bounds the gradient stops of a drawn waveform.
 pub const MAXIMUM_COLOUR_STOPS: usize = 4096;
@@ -111,19 +111,29 @@ pub fn slice_colour(cells: &Slice) -> Option<OverviewColour> {
 #[must_use]
 pub fn column_colours(overview: &Overview, start: f64, end: f64, columns: usize) -> Vec<Option<OverviewColour>> {
     let slice_count = overview.slices().len();
-    if slice_count == 0 || columns == 0 || !start.is_finite() || !end.is_finite() || end <= start {
+    if slice_count == 0
+        || slice_count > MAXIMUM_SLICES
+        || columns == 0
+        || !start.is_finite()
+        || !end.is_finite()
+        || end <= start
+    {
         return Vec::new();
     }
     let stops = columns.min(MAXIMUM_COLOUR_STOPS);
     let column_length = (end - start) / stops as f64;
+    if !column_length.is_finite() {
+        return Vec::new();
+    }
     let combine_slices = column_length * slice_count as f64 > 1.0;
+    let mut cached_pair: Option<(usize, Contributions, Contributions)> = None;
     (0..stops)
         .map(|column| {
             let column_start = (column as f64).mul_add(column_length, start);
             let contributions = if combine_slices {
                 contributions_over_interval(overview, column_start, column_start + column_length)
             } else {
-                contributions_at(overview, 0.5f64.mul_add(column_length, column_start))
+                contributions_at_cached(overview, 0.5_f64.mul_add(column_length, column_start), &mut cached_pair)
             };
             contributions.colour()
         })
@@ -149,9 +159,12 @@ const fn palette_components() -> [[u8; 3]; PALETTE_SIZE as usize] {
     components
 }
 
-/// Returns the contributions at a position of the track, interpolated between the centres of adjacent slices.
-/// Before the first centre and after the last one the colour of the end slice is used.
-fn contributions_at(overview: &Overview, position: f64) -> Contributions {
+/// Returns the contributions at a position of the track, reusing the decoded pair when `left_index` repeats.
+fn contributions_at_cached(
+    overview: &Overview,
+    position: f64,
+    cached_pair: &mut Option<(usize, Contributions, Contributions)>,
+) -> Contributions {
     let slices = overview.slices();
     let last_index = slices.len() - 1;
     let slice_position = position
@@ -160,9 +173,16 @@ fn contributions_at(overview: &Overview, position: f64) -> Contributions {
         .clamp(0.0, last_index as f64);
     let left_index = slice_position as usize;
     let fraction = slice_position - left_index as f64;
-    let mut neighbours = slices.iter().skip(left_index).map(Contributions::of_slice);
-    let left = neighbours.next().unwrap_or_default();
-    let right = neighbours.next().unwrap_or(left);
+    let (left, right) = match *cached_pair {
+        Some((cached_index, left, right)) if cached_index == left_index => (left, right),
+        _ => {
+            let mut neighbours = slices.iter().skip(left_index).map(Contributions::of_slice);
+            let left = neighbours.next().unwrap_or_default();
+            let right = neighbours.next().unwrap_or(left);
+            *cached_pair = Some((left_index, left, right));
+            (left, right)
+        }
+    };
     let interpolate = |left: f64, right: f64| fraction.mul_add(right - left, left);
     let mut components = left.components;
     for (component, right_component) in components.iter_mut().zip(right.components) {
@@ -172,6 +192,13 @@ fn contributions_at(overview: &Overview, position: f64) -> Contributions {
         components,
         weight: interpolate(left.weight, right.weight),
     }
+}
+
+/// Returns the contributions at a position of the track, interpolated between the centres of adjacent slices.
+/// Before the first centre and after the last one the colour of the end slice is used.
+fn contributions_at(overview: &Overview, position: f64) -> Contributions {
+    let mut cache = None;
+    contributions_at_cached(overview, position, &mut cache)
 }
 
 /// Returns the contributions of the slices between two positions of the track, each weighted by its overlap.

@@ -332,16 +332,25 @@ impl SpectrogramState {
         {
             return None;
         }
-        for frame in 0..frames {
-            let position = (self.length % FFT_SIZE as u64) as usize;
-            for (plane, ring) in planes.iter().zip(self.pcm.iter_mut()) {
-                let sample = *plane.as_ref().get(frame)?;
-                if !sample.is_finite() {
-                    return None;
-                }
-                *ring.get_mut(position)? = sample;
+        for plane in planes {
+            if plane.as_ref().iter().any(|sample| !sample.is_finite()) {
+                return None;
             }
-            self.length += 1;
+        }
+        let mut offset = 0;
+        while offset < frames {
+            let until_column = usize::try_from((self.next_center + HALF_WINDOW as u64).saturating_sub(self.length))
+                .unwrap_or(usize::MAX)
+                .max(1);
+            let ring_position = (self.length % FFT_SIZE as u64) as usize;
+            let take = (frames - offset).min(until_column).min(FFT_SIZE - ring_position);
+            for (plane, ring) in planes.iter().zip(self.pcm.iter_mut()) {
+                let source = plane.as_ref().get(offset..offset + take)?;
+                ring.get_mut(ring_position..ring_position + take)?
+                    .copy_from_slice(source);
+            }
+            self.length += take as u64;
+            offset += take;
             if self.length == self.next_center + HALF_WINDOW as u64 {
                 self.append_column()?;
             }
@@ -380,12 +389,23 @@ impl SpectrogramState {
             self.transform
                 .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)
                 .ok()?;
-            for (bin, (power, value)) in self.powers.iter_mut().zip(&self.output).enumerate() {
+            let dc = self.output.first()?;
+            *self.powers.first_mut()? +=
+                (f64::from(dc.re) * f64::from(dc.re) + f64::from(dc.im) * f64::from(dc.im)) * self.inverse_window_power;
+            for (power, value) in self
+                .powers
+                .get_mut(1..HALF_WINDOW)?
+                .iter_mut()
+                .zip(self.output.get(1..HALF_WINDOW)?)
+            {
                 let real = f64::from(value.re);
                 let imaginary = f64::from(value.im);
-                let factor = if bin == 0 || bin == HALF_WINDOW { 1.0 } else { 4.0 };
-                *power += (real * real + imaginary * imaginary) * factor * self.inverse_window_power;
+                *power += (real * real + imaginary * imaginary) * 4.0 * self.inverse_window_power;
             }
+            let nyquist = self.output.get(HALF_WINDOW)?;
+            *self.powers.get_mut(HALF_WINDOW)? += (f64::from(nyquist.re) * f64::from(nyquist.re)
+                + f64::from(nyquist.im) * f64::from(nyquist.im))
+                * self.inverse_window_power;
         }
         // Finite PCM can overflow a float FFT, which invalidates only this optional artifact.
         if self.powers.iter().any(|power| !power.is_finite()) {

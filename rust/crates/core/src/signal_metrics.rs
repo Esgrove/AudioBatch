@@ -62,27 +62,89 @@ impl SignalMetricsAccumulator {
 
     /// Accumulates in source order, independent of input packet and meter interval boundaries.
     pub(crate) fn push(&mut self, planes: &[&[f32]]) {
-        for frame in 0..planes.first().map_or(0, |plane| plane.len()) {
-            self.frames += 1;
-            let mut left_delta = 0.0;
-            for (channel, ((((plane, mean), moment), energy), clips)) in planes
-                .iter()
-                .zip(&mut self.means)
-                .zip(&mut self.moments)
-                .zip(&mut self.energies)
-                .zip(&mut self.clips)
-                .enumerate()
-            {
-                let sample = f64::from(*plane.get(frame).expect("equal measured plane lengths"));
-                let delta = sample - *mean;
-                *mean += delta / self.frames as f64;
-                *moment = delta.mul_add(sample - *mean, *moment);
-                *energy = sample.mul_add(sample, *energy);
-                *clips += u64::from(sample.abs() >= 1.0);
-                if channel == 0 {
-                    left_delta = delta;
-                } else if channel == 1 {
-                    self.covariance = left_delta.mul_add(sample - *mean, self.covariance);
+        match planes {
+            [plane] => {
+                let mut frames = self.frames;
+                let mut mean = self.means[0];
+                let mut moment = self.moments[0];
+                let mut energy = self.energies[0];
+                let mut clips = self.clips[0];
+                for &sample in *plane {
+                    frames += 1;
+                    let sample = f64::from(sample);
+                    let delta = sample - mean;
+                    mean += delta / frames as f64;
+                    moment = delta.mul_add(sample - mean, moment);
+                    energy = sample.mul_add(sample, energy);
+                    clips += u64::from(sample.abs() >= 1.0);
+                }
+                self.frames = frames;
+                self.means[0] = mean;
+                self.moments[0] = moment;
+                self.energies[0] = energy;
+                self.clips[0] = clips;
+            }
+            [left, right] => {
+                assert_eq!(left.len(), right.len(), "equal measured plane lengths");
+                let mut frames = self.frames;
+                let [mut mean_left, mut mean_right, ..] = self.means;
+                let [mut moment_left, mut moment_right, ..] = self.moments;
+                let [mut energy_left, mut energy_right, ..] = self.energies;
+                let [mut clips_left, mut clips_right, ..] = self.clips;
+                let mut covariance = self.covariance;
+                for (&left_sample, &right_sample) in left.iter().zip(*right) {
+                    frames += 1;
+                    let inverse = frames as f64;
+                    let left_sample = f64::from(left_sample);
+                    let left_delta = left_sample - mean_left;
+                    mean_left += left_delta / inverse;
+                    moment_left = left_delta.mul_add(left_sample - mean_left, moment_left);
+                    energy_left = left_sample.mul_add(left_sample, energy_left);
+                    clips_left += u64::from(left_sample.abs() >= 1.0);
+
+                    let right_sample = f64::from(right_sample);
+                    let right_delta = right_sample - mean_right;
+                    mean_right += right_delta / inverse;
+                    moment_right = right_delta.mul_add(right_sample - mean_right, moment_right);
+                    energy_right = right_sample.mul_add(right_sample, energy_right);
+                    clips_right += u64::from(right_sample.abs() >= 1.0);
+                    covariance = left_delta.mul_add(right_sample - mean_right, covariance);
+                }
+                self.frames = frames;
+                self.means[0] = mean_left;
+                self.means[1] = mean_right;
+                self.moments[0] = moment_left;
+                self.moments[1] = moment_right;
+                self.energies[0] = energy_left;
+                self.energies[1] = energy_right;
+                self.clips[0] = clips_left;
+                self.clips[1] = clips_right;
+                self.covariance = covariance;
+            }
+            _ => {
+                for frame in 0..planes.first().map_or(0, |plane| plane.len()) {
+                    self.frames += 1;
+                    let mut left_delta = 0.0;
+                    for (channel, ((((plane, mean), moment), energy), clips)) in planes
+                        .iter()
+                        .zip(&mut self.means)
+                        .zip(&mut self.moments)
+                        .zip(&mut self.energies)
+                        .zip(&mut self.clips)
+                        .enumerate()
+                    {
+                        let sample = f64::from(*plane.get(frame).expect("equal measured plane lengths"));
+                        let delta = sample - *mean;
+                        *mean += delta / self.frames as f64;
+                        *moment = delta.mul_add(sample - *mean, *moment);
+                        *energy = sample.mul_add(sample, *energy);
+                        *clips += u64::from(sample.abs() >= 1.0);
+                        if channel == 0 {
+                            left_delta = delta;
+                        } else if channel == 1 {
+                            self.covariance = left_delta.mul_add(sample - *mean, self.covariance);
+                        }
+                    }
                 }
             }
         }

@@ -124,6 +124,9 @@ impl BeatGrid {
             });
         }
         let marker_count = u32::from_be_bytes(count_bytes);
+        if data.len() > crate::MAXIMUM_PAYLOAD_BYTES || marker_count as usize > crate::MAXIMUM_RECORDS {
+            return Err(BeatGridError::MarkerCountOverflow { marker_count });
+        }
         let markers_end = (marker_count as usize)
             .checked_mul(MARKER_BYTES)
             .and_then(|bytes| bytes.checked_add(HEADER_BYTES))
