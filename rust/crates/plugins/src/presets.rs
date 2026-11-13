@@ -315,32 +315,37 @@ fn load_preset_file_with_policy(path: &Path, strict: bool) -> Result<ChainPreset
             });
         }
     };
-    let preset: ChainPreset = serde_json::from_str(&text).map_err(|source| PresetError::Invalid {
+    let mut value: serde_json::Value = serde_json::from_str(&text).map_err(|source| PresetError::Invalid {
         path: path.to_path_buf(),
         source,
     })?;
-    if preset.version > PRESET_FORMAT_VERSION {
+    if let Some(version) = value.get("version").and_then(serde_json::Value::as_u64)
+        && version > u64::from(PRESET_FORMAT_VERSION)
+    {
         return Err(PresetError::NewerVersion {
             path: path.to_path_buf(),
-            version: preset.version,
+            version: u32::try_from(version).unwrap_or(u32::MAX),
         });
     }
     if strict {
-        let value: serde_json::Value = serde_json::from_str(&text).map_err(|source| PresetError::Invalid {
+        let raw_slots = value
+            .as_object_mut()
+            .and_then(|object| object.remove("slots"))
+            .unwrap_or(serde_json::Value::Null);
+        let slots: Vec<ChainSlot> = serde_json::from_value(raw_slots).map_err(|source| PresetError::Invalid {
             path: path.to_path_buf(),
             source,
         })?;
-        // Deserialize the raw slots directly, without the GUI's slot-skipping deserializer.
-        let slots: Vec<ChainSlot> = serde_json::from_value(
-            value.get("slots").cloned().unwrap_or(serde_json::Value::Null),
-        )
-        .map_err(|source| PresetError::Invalid {
+        let preset: ChainPreset = serde_json::from_value(value).map_err(|source| PresetError::Invalid {
             path: path.to_path_buf(),
             source,
         })?;
         return Ok(ChainPreset { slots, ..preset });
     }
-    Ok(preset)
+    serde_json::from_value(value).map_err(|source| PresetError::Invalid {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// Orders preset names naturally, ignoring case, and by the exact name when they differ only in case.

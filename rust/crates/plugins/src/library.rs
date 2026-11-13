@@ -37,9 +37,6 @@ const KNOWN_PLUGINS_FORMAT_VERSION: u32 = 2;
 /// Name of the format version field in the JSON data files.
 const VERSION_FIELD: &str = "version";
 
-/// The VST3 format label retained for callers that specifically display VST3 plugins.
-pub const FORMAT_NAME: &str = "VST3";
-
 /// Failures while reading or writing saved plugin data.
 #[derive(Debug, thiserror::Error)]
 pub enum PluginDataError {

@@ -182,6 +182,8 @@ struct RenderedAudio {
     decode_notice: Option<String>,
     /// Notice naming the plugins that refused their saved settings and processed with their current ones.
     settings_notice: Option<String>,
+    /// Reusable interleaved byte buffer for batched block writes.
+    scratch: Vec<u8>,
 }
 
 /// Reads the source in blocks of the chain's size, applying the input gain.
@@ -573,6 +575,7 @@ fn render_blocks(
         last_audible_frame: None,
         decode_notice: None,
         settings_notice: None,
+        scratch: Vec::with_capacity(PROCESSING_BLOCK_FRAMES * channels as usize * SAMPLE_BYTES),
     };
     loop {
         if is_cancelled() {
@@ -623,27 +626,43 @@ fn write_block(
     end: usize,
     rendered: &mut RenderedAudio,
 ) -> Result<(), ProcessingError> {
-    let channels: Vec<&[f32]> = (0..rendered.channels as usize)
-        .filter_map(|channel| signal.channel(channel))
-        .collect();
+    let channel_count = rendered.channels as usize;
+    let mut channels = [&[][..]; MAXIMUM_CHANNELS as usize];
+    for (slot, samples) in channels
+        .iter_mut()
+        .take(channel_count)
+        .zip((0..channel_count).filter_map(|channel| signal.channel(channel)))
+    {
+        *slot = samples;
+    }
+    let active_channels = channels.get(..channel_count).unwrap_or_default();
+    rendered.scratch.clear();
+    rendered
+        .scratch
+        .reserve(end.saturating_sub(first) * channel_count * SAMPLE_BYTES);
+    let base_frame = rendered.frames_written;
+    let mut last_audible = rendered.last_audible_frame;
     for frame in first..end {
         let mut audible = false;
-        for samples in &channels {
+        for samples in active_channels {
             let sample = samples.get(frame).copied().unwrap_or_default();
             if !sample.is_finite() {
                 return Err(ProcessingError::InvalidSamples);
             }
             audible |= sample.abs() > SILENCE_THRESHOLD;
-            rendered
-                .file
-                .write_all(&sample.to_ne_bytes())
-                .map_err(ProcessingError::WriteRender)?;
+            rendered.scratch.extend_from_slice(&sample.to_ne_bytes());
         }
+        let current_frame = base_frame + (frame - first) as u64;
         if audible {
-            rendered.last_audible_frame = Some(rendered.frames_written);
+            last_audible = Some(current_frame);
         }
-        rendered.frames_written += 1;
     }
+    rendered
+        .file
+        .write_all(&rendered.scratch)
+        .map_err(ProcessingError::WriteRender)?;
+    rendered.frames_written = base_frame + end.saturating_sub(first) as u64;
+    rendered.last_audible_frame = last_audible;
     Ok(())
 }
 
@@ -693,8 +712,12 @@ fn write_final_output(
                 plane.push(value);
             }
         }
-        let plane_slices: Vec<&[i32]> = planes.iter().map(Vec::as_slice).collect();
-        writer.write_planar_pcm(&plane_slices).map_err(write_error)?;
+        let mut plane_slices = [&[][..]; MAXIMUM_CHANNELS as usize];
+        for (slot, plane) in plane_slices.iter_mut().zip(&planes) {
+            *slot = plane.as_slice();
+        }
+        let active_slices = plane_slices.get(..channels).unwrap_or_default();
+        writer.write_planar_pcm(active_slices).map_err(write_error)?;
         position += block_frames as u64;
         on_progress((position as f64 / final_frames as f64) as f32);
     }

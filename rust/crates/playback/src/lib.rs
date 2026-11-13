@@ -409,10 +409,13 @@ impl Player {
 
     /// Closes the current file and stops playback.
     pub fn unload(&mut self) {
-        self.advance_generation();
+        let generation = self.advance_generation();
+        self.shared.load_generation.store(generation, Ordering::Release);
         self.shared.playing.store(false, Ordering::Relaxed);
         self.shared.source_rate.store(0, Ordering::Relaxed);
+        self.shared.source_frames.store(0, Ordering::Relaxed);
         self.shared.position.store(0, Ordering::Relaxed);
+        self.shared.ended.store(false, Ordering::Relaxed);
         self.loaded_path = None;
         let _ = self.commands.send(Command::Unload);
     }
@@ -445,7 +448,7 @@ impl Player {
         if idle_since.elapsed() >= STREAM_IDLE_TIMEOUT {
             self.close_stream();
             self.idle_since = None;
-            self.apply_insert_changes_without_stream();
+            self.apply_insert_changes_when_idle();
         }
     }
 
@@ -462,7 +465,7 @@ impl Player {
 
     /// Moves playback to the given time in seconds. The playhead jumps immediately.
     pub fn seek(&mut self, seconds: f64) {
-        if self.loaded_path.is_none() {
+        if self.loaded_path.is_none() || !seconds.is_finite() {
             return;
         }
         let seconds = self
@@ -480,9 +483,10 @@ impl Player {
     /// Sets the linear gain applied before the preview insert, such as a file's custom gain.
     /// Playback without an insert plays the file unchanged.
     pub fn set_insert_gain(&self, gain: f32) {
+        let sanitized = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
         self.shared
             .insert_gain_bits
-            .store(gain.max(0.0).to_bits(), Ordering::Relaxed);
+            .store(sanitized.to_bits(), Ordering::Relaxed);
     }
 
     /// Returns the linear gain applied before the preview insert.
@@ -539,8 +543,17 @@ impl Player {
     /// because the stream is not running.
     pub fn set_insert(&mut self, insert: Option<Box<dyn PreviewInsert>>) -> Result<(), InsertError> {
         self.insert.set(insert)?;
-        self.apply_insert_changes_without_stream();
+        self.apply_insert_changes_when_idle();
         Ok(())
+    }
+
+    /// Forces any queued insert changes to settle on the control thread and returns retired inserts.
+    /// Safe to call when a paused or stalled stream has not serviced the queue on its own.
+    pub fn flush_insert_changes(&mut self) -> Vec<Box<dyn PreviewInsert>> {
+        self.renderer
+            .renderer
+            .with_control(OutputRenderer::apply_insert_changes);
+        self.insert.take_retired()
     }
 
     /// Returns the inserts the audio callback replaced since the last call,
@@ -610,7 +623,7 @@ impl Player {
             let playing = self.shared.playing.load(Ordering::Relaxed);
             self.close_stream();
             self.shared.playing.store(playing, Ordering::Relaxed);
-            self.apply_insert_changes_without_stream();
+            self.apply_insert_changes_when_idle();
         }
         if self.stream.is_some() {
             return;
@@ -644,10 +657,10 @@ impl Player {
         self.collect_captures();
     }
 
-    /// Makes the queued insert changes on this thread while no stream calls the renderer,
-    /// so a detached insert comes back at once instead of waiting for a stream that is not running.
-    fn apply_insert_changes_without_stream(&self) {
-        if self.stream.is_none() {
+    /// Makes the queued insert changes on this thread while no stream runs or playback is stopped/paused,
+    /// so a detached insert comes back at once without waiting for an idle audio backend.
+    fn apply_insert_changes_when_idle(&self) {
+        if self.stream.is_none() || !self.is_playing() {
             self.renderer
                 .renderer
                 .with_control(OutputRenderer::apply_insert_changes);

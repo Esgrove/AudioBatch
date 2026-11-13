@@ -7,9 +7,11 @@ use walkdir::WalkDir;
 /// Returns the `CLAP_PATH` entries followed by the platform's user and system plugin folders.
 #[must_use]
 pub fn default_search_paths() -> Vec<PathBuf> {
-    let mut paths: Vec<_> = std::env::var_os("CLAP_PATH")
-        .map(|value| std::env::split_paths(&value).collect())
-        .unwrap_or_default();
+    let mut paths: Vec<_> = std::env::var_os("CLAP_PATH").map_or_default(|value| {
+        std::env::split_paths(&value)
+            .filter(|path| !path.as_os_str().is_empty())
+            .collect()
+    });
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = dirs::home_dir() {
@@ -44,12 +46,16 @@ pub fn is_clap_bundle(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("clap"))
 }
 
-/// Finds CLAP bundles beneath search roots, without descending into bundles or following directory links.
+/// Finds CLAP bundles beneath search roots, following symlinked folders
+/// while skipping hidden entries and bundle interiors.
 #[must_use]
 pub fn find_bundles(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut bundles = Vec::new();
     for root in paths {
-        let mut entries = WalkDir::new(root).follow_links(false).into_iter();
+        let mut entries = WalkDir::new(root)
+            .follow_links(true)
+            .into_iter()
+            .filter_entry(|entry| entry.depth() == 0 || !entry.file_name().as_encoded_bytes().starts_with(b"."));
         while let Some(entry) = entries.next() {
             let Ok(entry) = entry else { continue };
             if is_clap_bundle(entry.path()) {

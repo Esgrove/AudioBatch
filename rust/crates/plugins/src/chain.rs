@@ -21,7 +21,7 @@ use crate::library::{
 const CHAIN_FORMAT_VERSION: u32 = 2;
 
 /// One plugin of the chain.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "ChainSlotFields")]
 pub struct ChainSlot {
     /// The plugin.
@@ -29,26 +29,10 @@ pub struct ChainSlot {
     /// Whether the plugin processes files, so a slot can be bypassed without losing its settings.
     pub enabled: bool,
     /// Saved state of the plugin's audio component, empty for the plugin's defaults.
-    #[serde(
-        default,
-        serialize_with = "serialize_base64",
-        deserialize_with = "deserialize_base64"
-    )]
     pub component_state: Vec<u8>,
     /// Saved state of the plugin's edit controller, empty for the plugin's defaults.
-    #[serde(
-        default,
-        serialize_with = "serialize_base64",
-        deserialize_with = "deserialize_base64"
-    )]
     pub controller_state: Vec<u8>,
     /// Saved opaque CLAP state, separate from the VST3 component and controller streams.
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        serialize_with = "serialize_base64",
-        deserialize_with = "deserialize_base64"
-    )]
     pub clap_state: Vec<u8>,
 }
 
@@ -58,6 +42,14 @@ pub struct ChainSlot {
 pub struct StateFormatError {
     /// Format that owns this slot's state.
     pub format: PluginFormat,
+}
+
+/// The plugins files are processed with, in order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginChain {
+    /// The slots, in processing order. A damaged slot is skipped when the chain is read.
+    #[serde(default, deserialize_with = "deserialize_slots_skipping_damaged")]
+    pub slots: Vec<ChainSlot>,
 }
 
 /// Decoded fields validated together before they can become a saved slot.
@@ -73,35 +65,17 @@ struct ChainSlotFields {
     clap_state: Vec<u8>,
 }
 
-/// The plugins files are processed with, in order.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginChain {
-    /// The slots, in processing order. A damaged slot is skipped when the chain is read.
-    #[serde(default, deserialize_with = "deserialize_slots_skipping_damaged")]
-    pub slots: Vec<ChainSlot>,
-}
-
-impl TryFrom<ChainSlotFields> for ChainSlot {
-    type Error = StateFormatError;
-
-    fn try_from(fields: ChainSlotFields) -> Result<Self, Self::Error> {
-        let foreign = match fields.plugin.format {
-            PluginFormat::Vst3 => !fields.clap_state.is_empty(),
-            PluginFormat::Clap => !fields.component_state.is_empty() || !fields.controller_state.is_empty(),
-        };
-        if foreign {
-            return Err(StateFormatError {
-                format: fields.plugin.format,
-            });
-        }
-        Ok(Self {
-            plugin: fields.plugin,
-            enabled: fields.enabled,
-            component_state: fields.component_state,
-            controller_state: fields.controller_state,
-            clap_state: fields.clap_state,
-        })
-    }
+/// Borrowed view used to serialize a format-validated chain slot.
+#[derive(Serialize)]
+struct SerializedChainSlot<'a> {
+    plugin: &'a PluginDescription,
+    enabled: bool,
+    #[serde(serialize_with = "serialize_base64")]
+    component_state: &'a [u8],
+    #[serde(serialize_with = "serialize_base64")]
+    controller_state: &'a [u8],
+    #[serde(skip_serializing_if = "<[u8]>::is_empty", serialize_with = "serialize_base64")]
+    clap_state: &'a [u8],
 }
 
 impl ChainSlot {
@@ -157,6 +131,51 @@ impl ChainSlot {
             }
         }
         Ok(())
+    }
+
+    /// Rejects cross-format state streams before serialization or deserialization.
+    const fn validate_state_format(&self) -> Result<(), StateFormatError> {
+        let foreign = match self.plugin.format {
+            PluginFormat::Vst3 => !self.clap_state.is_empty(),
+            PluginFormat::Clap => !self.component_state.is_empty() || !self.controller_state.is_empty(),
+        };
+        if foreign {
+            Err(StateFormatError {
+                format: self.plugin.format,
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Serialize for ChainSlot {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.validate_state_format().map_err(serde::ser::Error::custom)?;
+        SerializedChainSlot {
+            plugin: &self.plugin,
+            enabled: self.enabled,
+            component_state: &self.component_state,
+            controller_state: &self.controller_state,
+            clap_state: &self.clap_state,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl TryFrom<ChainSlotFields> for ChainSlot {
+    type Error = StateFormatError;
+
+    fn try_from(fields: ChainSlotFields) -> Result<Self, Self::Error> {
+        let slot = Self {
+            plugin: fields.plugin,
+            enabled: fields.enabled,
+            component_state: fields.component_state,
+            controller_state: fields.controller_state,
+            clap_state: fields.clap_state,
+        };
+        slot.validate_state_format()?;
+        Ok(slot)
     }
 }
 

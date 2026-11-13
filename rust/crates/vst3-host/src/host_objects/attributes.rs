@@ -6,8 +6,8 @@
 #![expect(unsafe_code, reason = "implements the IMessage and IAttributeList COM interfaces")]
 
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_char, c_void};
-use std::sync::{Mutex, PoisonError};
+use std::ffi::{CStr, c_char, c_void};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use vst3::Steinberg::Vst::{
     IAttributeList, IAttributeList_::AttrID, IAttributeListTrait, IMessage, IMessageTrait, TChar,
@@ -24,8 +24,8 @@ enum AttributeValue {
     Float(f64),
     /// UTF-16 text, with its terminating null.
     Text(Vec<TChar>),
-    /// Raw bytes.
-    Binary(Vec<u8>),
+    /// Raw bytes kept behind shared non-unique storage so map rehashing never invalidates borrowed pointers.
+    Binary(Arc<[u8]>),
 }
 
 /// An attribute list.
@@ -33,18 +33,22 @@ enum AttributeValue {
 pub struct HostAttributeList {
     /// The values by attribute id.
     values: Mutex<HashMap<String, AttributeValue>>,
+    /// Replaced binary allocations retained until the list is released.
+    retired_binary: Mutex<Vec<Arc<[u8]>>>,
 }
 
 /// A message with an id and an attribute list.
 pub struct HostMessage {
-    /// The message id.
-    id: Mutex<CString>,
+    /// Current and retired message id strings, kept alive until the message drops.
+    id: Mutex<MessageIdState>,
     /// The attributes of the message.
     attributes: ComWrapper<HostAttributeList>,
 }
 
-impl Class for HostAttributeList {
-    type Interfaces = (IAttributeList,);
+/// Retains previous message IDs so pointers returned by `getMessageID` stay valid across concurrent updates.
+struct MessageIdState {
+    current: Arc<CStr>,
+    retired: Vec<Arc<CStr>>,
 }
 
 impl HostAttributeList {
@@ -53,10 +57,17 @@ impl HostAttributeList {
         let Some(key) = attribute_key(id) else {
             return kInvalidArgument;
         };
-        self.values
+        let previous = self
+            .values
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(key, value);
+        if let Some(AttributeValue::Binary(previous)) = previous {
+            self.retired_binary
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(previous);
+        }
         kResultOk
     }
 
@@ -68,6 +79,10 @@ impl HostAttributeList {
         let values = self.values.lock().unwrap_or_else(PoisonError::into_inner);
         values.get(&key).map_or(kResultFalse, read)
     }
+}
+
+impl Class for HostAttributeList {
+    type Interfaces = (IAttributeList,);
 }
 
 impl IAttributeListTrait for HostAttributeList {
@@ -142,11 +157,11 @@ impl IAttributeListTrait for HostAttributeList {
     }
 
     unsafe fn setBinary(&self, id: AttrID, data: *const c_void, size_in_bytes: u32) -> tresult {
-        let bytes = if data.is_null() || size_in_bytes == 0 {
-            Vec::new()
+        let bytes: Arc<[u8]> = if data.is_null() || size_in_bytes == 0 {
+            Arc::from([])
         } else {
             // SAFETY: the plugin passes `size_in_bytes` readable bytes at `data`, checked for null above.
-            unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size_in_bytes as usize) }.to_vec()
+            Arc::from(unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size_in_bytes as usize) })
         };
         self.set(id, AttributeValue::Binary(bytes))
     }
@@ -178,7 +193,10 @@ impl Class for HostMessage {
 impl Default for HostMessage {
     fn default() -> Self {
         Self {
-            id: Mutex::new(CString::default()),
+            id: Mutex::new(MessageIdState {
+                current: Arc::from(c""),
+                retired: Vec::new(),
+            }),
             attributes: ComWrapper::new(HostAttributeList::default()),
         }
     }
@@ -186,18 +204,20 @@ impl Default for HostMessage {
 
 impl IMessageTrait for HostMessage {
     unsafe fn getMessageID(&self) -> FIDString {
-        // The pointer stays valid until the id is replaced, as the VST3 API documents.
-        self.id.lock().unwrap_or_else(PoisonError::into_inner).as_ptr()
+        // The pointer stays valid for the lifetime of the message across updates.
+        self.id.lock().unwrap_or_else(PoisonError::into_inner).current.as_ptr()
     }
 
     unsafe fn setMessageID(&self, id: FIDString) {
-        let text = if id.is_null() {
-            CString::default()
+        let next: Arc<CStr> = if id.is_null() {
+            Arc::from(c"")
         } else {
             // SAFETY: the plugin passes a null-terminated string, checked for null above.
-            unsafe { CStr::from_ptr(id) }.to_owned()
+            Arc::from(unsafe { CStr::from_ptr(id) })
         };
-        *self.id.lock().unwrap_or_else(PoisonError::into_inner) = text;
+        let mut state = self.id.lock().unwrap_or_else(PoisonError::into_inner);
+        let previous = std::mem::replace(&mut state.current, next);
+        state.retired.push(previous);
     }
 
     unsafe fn getAttributes(&self) -> *mut IAttributeList {
@@ -270,5 +290,34 @@ mod test_attributes {
             assert_eq!(list.getString(c"id".as_ptr(), buffer.as_mut_ptr(), 6), kResultOk);
         }
         assert_eq!(buffer, [u16::from(b'H'), u16::from(b'e'), 0]);
+    }
+
+    #[test]
+    fn binary_and_message_id_pointers_survive_rehashing_and_updates() {
+        let list = HostAttributeList::default();
+        let message = HostMessage::default();
+        let blob = [10_u8, 20, 30, 40];
+        // SAFETY: all buffers and C strings live across their calls,
+        // and returned pointers remain owned by list/message.
+        unsafe {
+            assert_eq!(list.setBinary(c"stable".as_ptr(), blob.as_ptr().cast(), 4), kResultOk);
+            let mut data: *const c_void = std::ptr::null();
+            let mut size = 0;
+            assert_eq!(
+                list.getBinary(c"stable".as_ptr(), &raw mut data, &raw mut size),
+                kResultOk
+            );
+            for index in 0..64 {
+                let key = std::ffi::CString::new(format!("extra_{index}")).expect("valid key");
+                assert_eq!(list.setInt(key.as_ptr(), index), kResultOk);
+            }
+            assert_eq!(std::slice::from_raw_parts(data.cast::<u8>(), size as usize), blob);
+
+            message.setMessageID(c"first".as_ptr());
+            let first = message.getMessageID();
+            message.setMessageID(c"second".as_ptr());
+            assert_eq!(CStr::from_ptr(first), c"first");
+            assert_eq!(CStr::from_ptr(message.getMessageID()), c"second");
+        }
     }
 }

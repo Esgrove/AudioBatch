@@ -1,9 +1,12 @@
 [package]
 name = "clap-host"
+description = "CLAP audio effect hosting, discovery, and native editor integration"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+authors.workspace = true
 license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 publish = false
 
 [features]
@@ -14,14 +17,14 @@ editor = ["plugin-host-core/editor", "dep:raw-window-handle"]
 clack-host.workspace = true
 clack-extensions = { workspace = true, features = ["clack-host", "audio-ports", "audio-ports-config", "configurable-audio-ports", "gui", "latency", "params", "render", "state", "tail", "thread-check", "timer"] }
 crossbeam-queue.workspace = true
-plugin-host-core = { path = "../plugin-host-core" }
+plugin-host-core.workspace = true
 raw-window-handle = { workspace = true, optional = true }
 thiserror.workspace = true
 walkdir.workspace = true
 dirs.workspace = true
 
 [dev-dependencies]
-audiobatch-test-clap-plugin = { path = "../test-clap-plugin" }
+audiobatch-test-clap-plugin.workspace = true
 tempfile.workspace = true
 
 [[example]]

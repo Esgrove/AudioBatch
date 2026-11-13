@@ -116,11 +116,17 @@ struct EditorShared {
     view: ComPtr<IPlugView>,
     /// Whether the view is attached to the window, so it may be told about size and scale changes.
     attached: Cell<bool>,
+    /// Whether the view allows host/user resizing.
+    resizable: Cell<bool>,
     /// Whether the user closed the window, which then only hides.
     closed: Cell<bool>,
     /// Whether the window is being resized because the plugin asked for it,
     /// so the resize is not reported back to the plugin.
     resizing_for_plugin: Cell<bool>,
+    /// Guards against unbounded `onSize -> resizeView -> onSize` recursion at an unchanged size.
+    in_on_size: Cell<bool>,
+    /// Most recent content size delivered to the window or view.
+    last_size: Cell<Option<ViewSize>>,
 }
 
 impl From<WindowError> for EditorError {
@@ -161,23 +167,26 @@ impl EditorWindow {
         if result != kResultTrue {
             return Err(EditorError::UnsupportedWindowType { result });
         }
+        // SAFETY: the view is valid.
+        let resizable = unsafe { view.canResize() == kResultTrue };
         let shared = Rc::new(EditorShared {
             view,
             attached: Cell::new(false),
+            resizable: Cell::new(resizable),
             closed: Cell::new(false),
             resizing_for_plugin: Cell::new(false),
+            in_on_size: Cell::new(false),
+            last_size: Cell::new(None),
         });
         let size = shared.size().unwrap_or(FALLBACK_SIZE);
+        shared.last_size.set(Some(size));
         let callbacks: Rc<dyn EditorCallbacks> = shared.clone();
-        let window = Rc::new(NativeWindow::create(
-            ui,
-            &callbacks,
-            title,
-            size,
-            shared.can_resize(),
-            owner,
-        )?);
-        let frame = ComWrapper::new(PlugFrame::new(Rc::downgrade(&shared), Rc::downgrade(&window)));
+        let window = Rc::new(NativeWindow::create(ui, &callbacks, title, size, resizable, owner)?);
+        let frame = ComWrapper::new(PlugFrame::new(
+            Rc::downgrade(&shared),
+            Rc::downgrade(&window),
+            core.dispatcher(),
+        ));
         let editor = Self {
             window,
             frame,
@@ -250,10 +259,14 @@ impl EditorWindow {
             return Err(EditorError::Attach { result });
         }
         self.shared.attached.set(true);
+        let initial_size = self.shared.last_size.get();
         if let Some(size) = self.shared.size() {
             self.shared.resizing_for_plugin.set(true);
             self.window.set_content_size(size);
             self.shared.resizing_for_plugin.set(false);
+            if initial_size != Some(size) {
+                self.shared.tell_size(size);
+            }
         }
         if let Some(position) = position {
             self.window.move_to(position);
@@ -298,7 +311,9 @@ impl EditorShared {
     /// Returns true when the view can be resized by the user.
     fn can_resize(&self) -> bool {
         // SAFETY: the view is valid.
-        unsafe { self.view.canResize() == kResultTrue }
+        let resizable = unsafe { self.view.canResize() == kResultTrue };
+        self.resizable.set(resizable);
+        resizable
     }
 
     /// Returns the nearest size to `size` that the view accepts, or `size` when the view does not say.
@@ -316,16 +331,22 @@ impl EditorShared {
 
     /// Tells the view that the user resized the window, unless the plugin asked for the resize itself.
     fn user_resized(&self, size: ViewSize) {
-        if self.attached.get() && !self.resizing_for_plugin.get() {
+        if self.attached.get() && !self.resizing_for_plugin.get() && self.resizable.get() {
             self.tell_size(size);
         }
     }
 
-    /// Tells the view its new size.
+    /// Tells the view its new size, guarding against re-entrant loops at the same size.
     fn tell_size(&self, size: ViewSize) {
+        if self.in_on_size.get() && self.last_size.get() == Some(size) {
+            return;
+        }
+        self.last_size.set(Some(size));
+        let was_in_on_size = self.in_on_size.replace(true);
         let mut rect = view_rect(size);
         // SAFETY: the view is valid, and the rectangle lives for the call.
         unsafe { self.view.onSize(&raw mut rect) };
+        self.in_on_size.set(was_in_on_size);
     }
 
     /// Tells a view that supports it how many physical pixels make one logical pixel.

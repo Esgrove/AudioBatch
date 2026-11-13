@@ -110,6 +110,8 @@ impl ProcessorHandle {
         // SAFETY: `ProcessContext` holds only integers and floats, for which all zero bits are valid.
         let mut context: ProcessContext = unsafe { std::mem::zeroed() };
         context.state = to_u32(StatesAndFlags_::kPlaying)
+            | to_u32(StatesAndFlags_::kContTimeValid)
+            | to_u32(StatesAndFlags_::kProjectTimeMusicValid)
             | to_u32(StatesAndFlags_::kTempoValid)
             | to_u32(StatesAndFlags_::kTimeSigValid);
         context.sampleRate = setup.sample_rate;
@@ -225,12 +227,14 @@ impl ProcessorHandle {
                 processor.setProcessing(1);
             }
         }
+        self.context.continousTimeSamples = 0;
         self.set_position(position);
     }
 
     /// Moves the position reported to the plugin to `position` samples.
     pub fn set_position(&mut self, position: u64) {
         self.context.projectTimeSamples = i64::try_from(position).unwrap_or(i64::MAX);
+        self.context.projectTimeMusic = project_time_music(self.context.projectTimeSamples, self.setup.sample_rate);
     }
 
     /// Processes owned or temporarily borrowed main buses with the same transport and parameter delivery.
@@ -307,8 +311,10 @@ impl ProcessorHandle {
         // SAFETY: the plugin is active, every bus points to buffers of at least `frames` samples per channel,
         // and the parameter changes and the context live for the call.
         let result = unsafe { self.core.processor().process(&raw mut data) };
+        drop(binding);
         self.context.projectTimeSamples += i64::try_from(frames).unwrap_or(0);
         self.context.continousTimeSamples += i64::try_from(frames).unwrap_or(0);
+        self.context.projectTimeMusic = project_time_music(self.context.projectTimeSamples, self.setup.sample_rate);
         if result == kResultOk {
             Ok(())
         } else {
@@ -443,6 +449,19 @@ impl Drop for MainBusBinding<'_> {
                 };
             }
         }
+    }
+}
+
+/// Converts a sample position to quarter-note musical beats at the reported tempo.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "sample positions fit within IEEE-754 f64 precision for musical timeline reporting"
+)]
+fn project_time_music(samples: i64, sample_rate: f64) -> f64 {
+    if sample_rate > 0.0 {
+        (samples as f64 / sample_rate) * (TEMPO / 60.0)
+    } else {
+        0.0
     }
 }
 

@@ -62,6 +62,8 @@ struct EditorShared {
     gui: PluginGui,
     window: RefCell<Weak<NativeWindow>>,
     lifecycle: GuiLifecycle,
+    attached: Cell<bool>,
+    resizable: Cell<bool>,
     resizing_for_plugin: Cell<bool>,
     size: Cell<WindowSize>,
 }
@@ -150,6 +152,8 @@ impl EditorWindow {
                 gui,
                 window: RefCell::new(Weak::new()),
                 lifecycle: GuiLifecycle::default(),
+                attached: Cell::new(false),
+                resizable: Cell::new(false),
                 resizing_for_plugin: Cell::new(false),
                 size: Cell::new(WindowSize {
                     width: 640,
@@ -225,6 +229,7 @@ impl EditorWindow {
         }
         let size = window_size(size);
         self.shared.size.set(size);
+        self.shared.resizable.set(resizable);
         let callbacks: Rc<dyn EditorCallbacks> = self.shared.clone();
         let window = Rc::new(NativeWindow::create(ui, &callbacks, title, size, resizable, owner)?);
         *self.shared.window.borrow_mut() = Rc::downgrade(&window);
@@ -241,6 +246,7 @@ impl EditorWindow {
                 self.shared.gui.set_parent(&handle, parent)?;
             }
         }
+        self.shared.attached.set(true);
         if let Some(position) = position {
             window.move_to(position);
         }
@@ -276,6 +282,7 @@ impl EditorShared {
         if !self.lifecycle.begin_destroy() {
             return;
         }
+        self.attached.set(false);
         self.core.shared.gui_open.store(false, Ordering::Release);
         {
             let mut parts = self.core.parts.borrow_mut();
@@ -370,7 +377,7 @@ impl EditorCallbacks for EditorShared {
         if self.resizing_for_plugin.get() {
             return size;
         }
-        if !self.lifecycle.created.get() {
+        if !self.attached.get() || !self.resizable.get() || !self.lifecycle.created.get() {
             return self.size.get();
         }
         let Ok(mut parts) = self.core.parts.try_borrow_mut() else {
@@ -387,7 +394,12 @@ impl EditorCallbacks for EditorShared {
             .map_or_else(|| self.size.get(), window_size)
     }
     fn resized(&self, size: WindowSize) {
-        if self.resizing_for_plugin.get() || !self.lifecycle.created.get() {
+        if self.resizing_for_plugin.get()
+            || !self.attached.get()
+            || !self.resizable.get()
+            || !self.lifecycle.created.get()
+            || size == self.size.get()
+        {
             return;
         }
         let Ok(mut parts) = self.core.parts.try_borrow_mut() else {
@@ -406,7 +418,8 @@ impl EditorCallbacks for EditorShared {
         }
     }
     fn scale_changed(&self, factor: f32) {
-        if self.lifecycle.created.get()
+        if self.attached.get()
+            && self.lifecycle.created.get()
             && let Ok(mut parts) = self.core.parts.try_borrow_mut()
         {
             let _ = self.gui.set_scale(&parts.plugin.plugin_handle(), f64::from(factor));
@@ -524,7 +537,7 @@ fn window_size(size: GuiSize) -> WindowSize {
 }
 
 #[cfg(test)]
-mod editor_policy {
+mod test_editor_policy {
     #[cfg(windows)]
     use std::num::NonZeroIsize;
     #[cfg(target_os = "macos")]

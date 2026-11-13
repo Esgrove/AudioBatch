@@ -12,15 +12,28 @@ const EXAMPLE_NAME: &str = "clap_module";
 /// Returns an error if the current executable cannot be resolved to a Cargo profile directory.
 pub fn module_library_path() -> io::Result<PathBuf> {
     let executable = std::env::current_exe()?;
-    let profile = executable
-        .parent()
-        .and_then(Path::parent)
+    let profile = profile_folder(&executable)
         .ok_or_else(|| io::Error::other("the test executable is not inside a Cargo target directory"))?;
     Ok(profile.join("examples").join(format!(
         "{}{EXAMPLE_NAME}{}",
         std::env::consts::DLL_PREFIX,
         std::env::consts::DLL_SUFFIX
     )))
+}
+
+/// Resolves the Cargo profile folder (`<target>/<profile>`) across both `<profile>/deps/<exe>`
+/// and Cargo 1.100's `<profile>/build/<pkg>/<hash>/out/<exe>` build-dir layouts.
+fn profile_folder(executable: &Path) -> Option<&Path> {
+    let direct = executable.parent()?.parent()?;
+    if direct
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "build")
+    {
+        return direct.parent()?.parent()?.parent();
+    }
+    Some(direct)
 }
 
 /// Copies the module into `<folder>/<name>.clap`, never a system plugin directory.

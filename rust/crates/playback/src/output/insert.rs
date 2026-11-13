@@ -22,6 +22,9 @@ use crate::preview_insert::{InsertChange, PreviewInsert};
 /// Length of the fade after a reset and of the fade when pausing, in frames.
 pub const TRANSITION_FRAMES: usize = 64;
 
+/// Duration of the linear ramp applied to live wet custom-gain changes, matching the C++ preview source.
+const GAIN_RAMP_SECONDS: f32 = 0.005;
+
 /// Most frames the insert processes in one call, whatever it accepts. The blocks are allocated up front.
 const SCRATCH_FRAMES: usize = 4096;
 
@@ -79,6 +82,14 @@ struct InsertPlayback {
     end_position: u64,
     /// Frames output since the reset, after the pre-roll.
     emitted: u64,
+    /// Current linear gain applied to pulled frames.
+    current_gain: f32,
+    /// Target linear gain of an active ramp.
+    target_gain: f32,
+    /// Per-frame linear gain step while ramping.
+    gain_step: f32,
+    /// Frames remaining in the current gain ramp.
+    gain_ramp_remaining: usize,
 }
 
 impl InsertRenderer {
@@ -164,7 +175,7 @@ impl InsertRenderer {
         let channels = device.channels.max(1);
         let total = output.len() / channels;
         let block_limit = insert.max_block_frames().clamp(1, SCRATCH_FRAMES);
-        let gain = shared.insert_gain();
+        playback.update_gain_target(shared.insert_gain(), device.rate);
         let source_mono = shared.source_mono.load(Ordering::Relaxed);
         let mut offset = 0;
         let mut underrun = false;
@@ -185,10 +196,12 @@ impl InsertRenderer {
                 length = length.min(remaining);
                 playback.drain = Some(remaining - length);
             } else {
-                let pulled = playback.pull(frames, generation, gain, left, right);
+                let pulled = playback.pull(frames, generation, left, right);
                 if pulled < length {
                     if shared.finished_generation.load(Ordering::Acquire) == generation {
-                        let drain = insert.latency_frames() + change.tail.load(Ordering::Relaxed);
+                        let drain = insert
+                            .latency_frames()
+                            .saturating_add(change.tail.load(Ordering::Relaxed));
                         let silence = (length - pulled).min(drain);
                         length = pulled + silence;
                         playback.drain = Some(drain - silence);
@@ -274,6 +287,7 @@ impl InsertPlayback {
                     generation,
                     shared.latency_compensation.load(Ordering::Relaxed),
                     position,
+                    shared.insert_gain(),
                 );
             } else if !self.active || self.fade_out.is_some() {
                 self.active = true;
@@ -310,8 +324,15 @@ impl InsertPlayback {
     }
 
     /// Resets the insert to start at `position` frames of the output rate,
-    /// and starts playback through it for a generation.
-    fn reset(&mut self, insert: &mut dyn PreviewInsert, generation: u32, compensate: bool, position: u64) {
+    /// and starts playback through it for a generation with `initial_gain` applied immediately.
+    fn reset(
+        &mut self,
+        insert: &mut dyn PreviewInsert,
+        generation: u32,
+        compensate: bool,
+        position: u64,
+        initial_gain: f32,
+    ) {
         insert.reset(position);
         *self = Self {
             active: true,
@@ -319,28 +340,49 @@ impl InsertPlayback {
             latency: insert.latency_frames(),
             compensate,
             pre_roll: if compensate { insert.latency_frames() } else { 0 },
+            current_gain: initial_gain,
+            target_gain: initial_gain,
             ..Self::default()
         };
     }
 
-    /// Pulls frames of the generation into the blocks with the gain applied, and returns how many it pulled.
-    fn pull(
-        &mut self,
-        frames: &mut Consumer<Frame>,
-        generation: u32,
-        gain: f32,
-        left: &mut [f32],
-        right: &mut [f32],
-    ) -> usize {
+    /// Starts or updates a 5 ms linear ramp when the shared insert gain changes during active playback.
+    fn update_gain_target(&mut self, target_gain: f32, device_rate: u32) {
+        if (target_gain - self.target_gain).abs() <= f32::EPSILON {
+            return;
+        }
+        self.target_gain = target_gain;
+        let ramp_frames = (GAIN_RAMP_SECONDS * device_rate as f32).round() as usize;
+        if ramp_frames <= 1 {
+            self.current_gain = target_gain;
+            self.gain_step = 0.0;
+            self.gain_ramp_remaining = 0;
+        } else {
+            self.gain_step = (target_gain - self.current_gain) / ramp_frames as f32;
+            self.gain_ramp_remaining = ramp_frames;
+        }
+    }
+
+    /// Pulls frames of the generation into the blocks with smoothed gain applied, and returns how many it pulled.
+    fn pull(&mut self, frames: &mut Consumer<Frame>, generation: u32, left: &mut [f32], right: &mut [f32]) -> usize {
         let mut pulled = 0;
         for (left, right) in left.iter_mut().zip(right.iter_mut()) {
             let Some(frame) = pop_current_frame(frames, generation) else {
                 break;
             };
+            if self.gain_ramp_remaining > 0 {
+                self.gain_ramp_remaining -= 1;
+                if self.gain_ramp_remaining == 0 {
+                    self.current_gain = self.target_gain;
+                } else {
+                    self.current_gain += self.gain_step;
+                }
+            }
+            let gain = self.current_gain;
             *left = frame.left * gain;
             *right = frame.right * gain;
             self.start_position.get_or_insert(frame.position);
-            self.end_position = frame.position + 1;
+            self.end_position = frame.position.saturating_add(1);
             pulled += 1;
         }
         pulled
@@ -383,10 +425,11 @@ impl InsertPlayback {
             let audible = self
                 .emitted
                 .saturating_sub(if self.compensate { 0 } else { self.latency as u64 });
-            let advanced = audible * u64::from(source_rate) / u64::from(device_rate);
+            let advanced = u64::try_from(u128::from(audible) * u128::from(source_rate) / u128::from(device_rate))
+                .unwrap_or(u64::MAX);
             shared
                 .position
-                .store((start + advanced).min(self.end_position), Ordering::Relaxed);
+                .store(start.saturating_add(advanced).min(self.end_position), Ordering::Relaxed);
         }
     }
 }

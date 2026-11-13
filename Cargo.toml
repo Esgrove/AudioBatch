@@ -20,6 +20,7 @@ audiobatch-plugins = { path = "rust/crates/plugins" }
 audiobatch-test-plugin = { path = "rust/crates/test-plugin" }
 audiobatch-test-clap-plugin = { path = "rust/crates/test-clap-plugin" }
 build-info = { path = "rust/crates/build-info" }
+clap-host = { path = "rust/crates/clap-host" }
 plugin-host-core = { path = "rust/crates/plugin-host-core" }
 serato-tags = { path = "rust/crates/serato" }
 test-fixtures = { path = "rust/crates/test-fixtures" }

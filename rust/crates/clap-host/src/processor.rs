@@ -194,15 +194,11 @@ impl ProcessorHandle {
         };
         for (index, port) in storage.inputs.iter_mut().enumerate() {
             if Some(index) != storage.layout.main_input {
-                for channel in port {
-                    channel.fill(0.0);
-                }
+                clear_port_prefix(port, frames);
             }
         }
         for port in &mut storage.outputs {
-            for channel in port {
-                channel.fill(0.0);
-            }
+            clear_port_prefix(port, frames);
         }
         let mut count = storage.pending_edits;
         let mut completed = storage.pending_sequence;
@@ -346,6 +342,15 @@ impl Drop for ProcessorHandle {
         // No native calls, storage destruction, queue notification, or final Arc release occur here.
         // The UI registry keeps the complete instance and storage alive until its next service tick.
         self.core.leased.store(false, Ordering::Release);
+    }
+}
+
+/// Zeroes the active `frames` prefix of every channel in a port without touching trailing capacity.
+fn clear_port_prefix(port: &mut [Vec<f32>], frames: usize) {
+    for channel in port {
+        if let Some(samples) = channel.get_mut(..frames) {
+            samples.fill(0.0);
+        }
     }
 }
 

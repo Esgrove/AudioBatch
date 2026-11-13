@@ -2,15 +2,18 @@
 
 #![expect(unsafe_code, reason = "loads native CLAP entries under the CLAP ABI contract")]
 
+use std::collections::HashMap;
 use std::ffi::CStr;
-use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use clack_host::entry::{PluginEntry, PluginEntryError};
 use thiserror::Error;
 
 use crate::UiThread;
+
+/// Loaded disk-backed CLAP modules cached by path, retained for the process lifetime like VST3 modules.
+static LOADED_MODULES: OnceLock<Mutex<HashMap<PathBuf, Arc<Module>>>> = OnceLock::new();
 
 /// A failure to load a CLAP entry or read its plugin factory.
 #[derive(Debug, Error)]
@@ -54,27 +57,36 @@ pub struct ClassInfo {
     pub features: Vec<String>,
 }
 
-/// A loaded CLAP entry, retained for the process lifetime to avoid unsafe native unloading.
+/// A loaded CLAP entry, cached by path for disk bundles to avoid repeated native loading and unloading.
 pub struct Module {
-    pub(crate) entry: ManuallyDrop<PluginEntry>,
+    pub(crate) entry: PluginEntry,
     path: PathBuf,
     classes: Vec<ClassInfo>,
 }
 
 impl Module {
-    /// Loads an explicitly selected CLAP entry on the UI thread.
+    /// Loads an explicitly selected CLAP entry on the UI thread, reusing an already loaded disk bundle.
     /// On macOS Clack resolves the bundle executable through Foundation's Info.plist-aware bundle API.
     ///
     /// # Errors
     /// Returns a concrete entry error or an invalid factory/descriptor error.
     pub fn load(ui: &UiThread, path: &Path) -> Result<Arc<Self>, ModuleError> {
+        let modules = LOADED_MODULES.get_or_init(Mutex::default);
+        if let Some(module) = modules.lock().unwrap_or_else(PoisonError::into_inner).get(path) {
+            return Ok(Arc::clone(module));
+        }
         // SAFETY: The caller selects native plugin code under the CLAP ABI contract.
         // Scanning callers isolate this inherently untrusted native execution in a worker process.
         let entry = unsafe { PluginEntry::load(path) }.map_err(|source| ModuleError::Load {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::from_entry(ui, path, entry)
+        let module = Self::from_entry(ui, path, entry)?;
+        modules
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.to_path_buf(), Arc::clone(&module));
+        Ok(module)
     }
 
     /// Wraps a Clack entry, including safe in-process test entries, and validates its descriptors.
@@ -105,7 +117,7 @@ impl Module {
             });
         }
         Ok(Arc::new(Self {
-            entry: ManuallyDrop::new(entry),
+            entry,
             path: path.to_path_buf(),
             classes,
         }))
