@@ -653,17 +653,23 @@ Do a clean rebuild after moving a native build directory to another CPU.
 Native binaries may not run on machines with fewer instruction extensions.
 A Windows baseline binary still requires AVX2.
 
-### Local macOS signing
+### macOS signing, notarization, and `.pkg` installer
 
 The `AudioBatchSign` target signs the finished `AudioBatch.app` after every resource copy, with Ninja and Xcode alike,
 using `sign_mac_app_bundle` from the root `common.sh`, shared with the Rust build.
+`build.sh` and `install.sh` also sign the standalone `audiobatch` CLI binary with `sign_mac_cli_binary`.
 Xcode automatic signing is disabled.
 `CODESIGN_IDENTITY` selects an installed identity, and an unset or empty value signs ad hoc.
 An invalid identity fails the build.
 Building only `--target AudioBatch` skips signing, so build `AudioBatchSign` too.
 The signature uses the hardened runtime,
-and the shared [`macos.entitlements`](../assets/macos.entitlements) only disables library validation,
-so third-party plugins load. The signature is for local use, without notarization.
+and the shared [`macos.entitlements`](../assets/macos.entitlements) relaxes library validation
+and unsigned executable memory so third-party plugins load in-process.
+Pass `--notarize` to `install.sh` or `./package-macos.sh` with `APPLE_TEAM_ID`, `CODESIGN_IDENTITY`,
+`INSTALLER_SIGN_IDENTITY`, and `APPLE_NOTARY_PROFILE` configured to notarize and staple with Apple's notary service.
+`./package-macos.sh` builds a non-relocatable Apple Silicon (`apple-m1`, macOS 15+)
+installer in `../dist/macos/AudioBatch-<version>.pkg` with customizable Application
+(`/Applications`) and CLI (`/usr/local/bin` plus zsh completions) choices.
 
 ```shell
 codesign --verify --deep --strict --verbose=2 cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app

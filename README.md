@@ -35,6 +35,9 @@ The root wrappers build both applications and install them alongside C++ ImageCo
 Select an application to run just its script, for example `./build.sh rust` or `./install.sh cpp --app-only`.
 Use `--debug` for Debug application builds and each script's `--help` for its options.
 Options passed to both applications must be supported by both scripts.
+On macOS,
+`./package-macos.sh` builds Apple Silicon `.pkg` distribution installers in `dist/macos/` with customizable App/CLI
+and VST3/Audio Unit checkboxes, supporting `--sign` and `--notarize`.
 
 ## Formats And Compatibility
 
