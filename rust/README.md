@@ -148,9 +148,11 @@ cargo build --release
 
 ### macOS signing, notarization, and `.pkg` installer
 
-`build.sh` and `install.sh` sign the finished `AudioBatchRs.app` with `sign_mac_app_bundle`
-and the standalone `audiobatch-rs` CLI with `sign_mac_cli_binary` from the root `common.sh`,
-shared with the C++ build.
+`build.sh` and `install.sh` sign the finished `AudioBatchRs.app` with `sign_mac_app_bundle` from the root `common.sh`.
+The helper is shared with the C++ build.
+`build.sh` also signs its standalone CLI output.
+Local `install.sh` leaves the Cargo-installed CLI's signature unchanged.
+The distribution packager signs its staged CLI with the host entitlements before creating the `.pkg`.
 `CODESIGN_IDENTITY` selects an installed identity, and an unset or empty value signs ad hoc.
 An invalid identity fails the build.
 The signature uses the hardened runtime,

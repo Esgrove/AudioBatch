@@ -142,8 +142,12 @@ install_application() {
         require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
         local cli_installed_path
         cli_installed_path=$(command -v "$CLI_BINARY_NAME")
+        # Cargo owns installation and registration. A PATH lookup is not authority to re-sign another installation.
+        local usual_cargo_bin="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin"
+        if [ "$(dirname "$cli_installed_path")" != "$usual_cargo_bin" ]; then
+            print_yellow "PATH selects $cli_installed_path. Check Cargo's reported destination for a shadowed installation."
+        fi
         if [ "$BASH_PLATFORM" = "mac" ]; then
-            sign_mac_cli_binary "$cli_installed_path" "$CLI_BUNDLE_ID"
             if [ "$NOTARIZE" = true ]; then
                 notarize_mac_artifact "$cli_installed_path"
             fi
