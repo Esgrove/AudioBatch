@@ -37,7 +37,8 @@ OPTIONS: All options are optional
         Reuse the existing C++ build directory. Rust accepts this compatibility option without changing its build.
 
     -z | --notarize
-        Sign with Developer ID and notarize the macOS applications and C++ ImageControl bundles (macOS only).
+        Sign with Developer ID and notarize the GUI apps and C++ ImageControl bundles (macOS only).
+        CLIs are notarized only through package-macos.sh. Cannot be combined with --cli-only.
 
     -v | --verbose
         Display commands being executed.
@@ -46,14 +47,22 @@ OPTIONS: All options are optional
 parse_arguments() {
     parse_project_arguments install.sh true "$@"
     PLUGIN_INSTALL_ARGUMENTS=()
-    local argument
+    local argument cli_only=false notarize=false
     for argument in "${PROJECT_ARGUMENTS[@]}"; do
+        case "$argument" in
+            -l | --cli-only) cli_only=true ;;
+            -a | --app-only) cli_only=false ;;
+            -z | --notarize) notarize=true ;;
+        esac
         case "$argument" in
             -z | --notarize | -v | --verbose)
                 PLUGIN_INSTALL_ARGUMENTS+=("$argument")
                 ;;
         esac
     done
+    if [ "$cli_only" = true ] && [ "$notarize" = true ]; then
+        print_error_and_exit "--cli-only cannot be combined with --notarize. Use package-macos.sh for CLI distribution."
+    fi
 }
 
 # Dispatch application options separately from the plugin's independent installer interface.

@@ -35,7 +35,8 @@ OPTIONS: All options are optional
         Cannot be used with --reuse.
 
     -z | --notarize
-        Sign with Developer ID, submit to Apple's notary service, and staple the GUI app (macOS only).
+        Sign with Developer ID, notarize, and staple the GUI app only (macOS only).
+        Cannot be combined with --cli-only. CLI distribution is notarized through package-macos.sh.
         Requires APPLE_TEAM_ID / CODESIGN_IDENTITY and notarization credentials in the environment.
 
     -v | --verbose
@@ -84,6 +85,9 @@ parse_arguments() {
 
     if [ "$CLEAN_BUILD_DIR" = true ] && [ "$REUSE_BUILD_DIR" = true ]; then
         print_error_and_exit "--clean and --reuse cannot be used together."
+    fi
+    if [ "$NOTARIZE" = true ] && [ "$INSTALL_APP" = false ]; then
+        print_error_and_exit "--cli-only cannot be combined with --notarize. Use package-macos.sh for CLI distribution."
     fi
     if [ "$NOTARIZE" = true ] && [ "$BASH_PLATFORM" != "mac" ]; then
         print_error_and_exit "--notarize is only supported on macOS."
@@ -157,9 +161,6 @@ install_cli() {
 
     if [ "$BASH_PLATFORM" = "mac" ]; then
         sign_mac_cli_binary "$cli_source" "$CLI_BUNDLE_ID"
-        if [ "$NOTARIZE" = true ]; then
-            notarize_mac_artifact "$cli_source"
-        fi
     fi
 
     mv -f "$cli_source" "$INSTALL_DIR/$CLI_BINARY_NAME"
