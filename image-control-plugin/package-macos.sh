@@ -27,7 +27,7 @@ OPTIONS: All options are optional
         Plugin formats to build and include in the installer: 'all' (default), 'vst3', 'au', or 'vst3,au'.
 
     -m | --target-cpu <cpu>
-        Apple Silicon target CPU baseline. Defaults to 'apple-m1' (compatible with M1 through M6).
+        Compatibility option. Only 'apple-m1' is accepted. Distribution always targets M1 and newer.
 
     -c | --clean
         Delete the isolated dist CMake build directory before configuring.
@@ -163,11 +163,8 @@ parse_arguments() {
         print_error_and_exit "--clean cannot be combined with --reuse or --no-build."
     fi
 
-    local dist_suffix=""
-    if [ "$TARGET_CPU" != "apple-m1" ]; then
-        dist_suffix="-$TARGET_CPU"
-    fi
-    BUILD_DIR="$REPO/cmake-build-mac-dist${dist_suffix}"
+    require_mac_dist_cpu "$TARGET_CPU"
+    BUILD_DIR="$REPO/cmake-build-mac-dist"
     export CCACHE_DIR="$BUILD_DIR/ccache"
 }
 
@@ -199,22 +196,14 @@ build_dist_plugins() {
     )
 
     if [ "$REUSE_BUILD_DIR" = true ]; then
-        if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
-            print_error_and_exit "No dist CMake build directory to reuse at $BUILD_DIR"
-        fi
+        require_mac_dist_cmake_cache "$BUILD_DIR"
     else
-        local native_cpu=OFF
-        local target_cpu_value="$TARGET_CPU"
-        if [ "$TARGET_CPU" = "native" ]; then
-            native_cpu=ON
-            target_cpu_value=""
-        fi
         print_magenta "Configuring ImageControl dist build ($TARGET_CPU, arm64, macOS 15.0, formats: $formats_joined)..."
         plugin_configure "$BUILD_DIR" Release false OFF \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-            -DAUDIOBATCH_NATIVE_CPU="$native_cpu" \
-            -DAUDIOBATCH_TARGET_CPU="$target_cpu_value" \
+            -DAUDIOBATCH_NATIVE_CPU=OFF \
+            -DAUDIOBATCH_TARGET_CPU=apple-m1 \
             -DIMAGE_CONTROL_FORMATS="$formats_joined"
     fi
 
@@ -304,6 +293,7 @@ package_plugin_macos() {
     if [ "$NO_BUILD" = false ]; then
         build_dist_plugins
     fi
+    require_mac_dist_cmake_cache "$BUILD_DIR"
 
     local vst3_source="$BUILD_DIR/ImageControl_artefacts/Release/VST3/ImageControl.vst3"
     local au_source="$BUILD_DIR/ImageControl_artefacts/Release/AU/ImageControl.component"
@@ -322,8 +312,11 @@ package_plugin_macos() {
     elif [ "$INCLUDE_VST3" = false ] && [ "$INCLUDE_AU" = true ]; then
         suffix="-au"
     fi
-    if [ "$TARGET_CPU" != "apple-m1" ]; then
-        suffix="${suffix}-${TARGET_CPU}"
+    if [ "$INCLUDE_VST3" = true ]; then
+        verify_mac_dist_artifact "$BUILD_DIR/vst3-m1.sha256" "$vst3_source" "$version" "$NO_BUILD"
+    fi
+    if [ "$INCLUDE_AU" = true ]; then
+        verify_mac_dist_artifact "$BUILD_DIR/au-m1.sha256" "$au_source" "$version" "$NO_BUILD"
     fi
     local output_pkg="$OUTPUT_DIR/ImageControl-${version}${suffix}.pkg"
 

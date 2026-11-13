@@ -24,7 +24,7 @@ OPTIONS: All options are optional
         Directory for the generated .pkg file. Defaults to dist/macos in the repository root.
 
     -m | --target-cpu <cpu>
-        Apple Silicon target CPU baseline. Defaults to 'apple-m1' (compatible with M1 through M6).
+        Compatibility option. Only 'apple-m1' is accepted. Distribution always targets M1 and newer.
 
     -c | --clean
         Accepted for compatibility with the root packaging wrapper.
@@ -115,19 +115,23 @@ parse_arguments() {
     if [ "$CLEAN_BUILD_DIR" = true ] && { [ "$REUSE_BUILD_DIR" = true ] || [ "$NO_BUILD" = true ]; }; then
         print_error_and_exit "--clean cannot be combined with --reuse or --no-build."
     fi
+    require_mac_dist_cpu "$TARGET_CPU"
+    DIST_TARGET_ROOT="${CARGO_TARGET_DIR:-$REPO/target}"
+    case "$DIST_TARGET_ROOT" in
+        /*) ;;
+        *) DIST_TARGET_ROOT="$PWD/$DIST_TARGET_ROOT" ;;
+    esac
+    DIST_TARGET_DIR="${DIST_TARGET_ROOT}/aarch64-apple-darwin/dist"
 }
 
 build_dist_binaries() {
     require_command cargo "Cargo not found in path. Maybe install rustup?"
-    if [ "$TARGET_CPU" != apple-m1 ]; then
-        print_error_and_exit "Distribution builds require --target-cpu apple-m1. Local build.sh remains native."
-    fi
     print_magenta "Building Rust AudioBatchRs dist profile (apple-m1, aarch64-apple-darwin, macOS 15.0)..."
     # Encoded flags take precedence over all inherited Cargo CPU and feature overrides.
     MACOSX_DEPLOYMENT_TARGET=15.0 \
         CARGO_ENCODED_RUSTFLAGS=$'-C\x1ftarget-cpu=apple-m1' \
         cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --locked --profile dist --target aarch64-apple-darwin \
-        -p audiobatch-cli -p audiobatch-gui --bins
+        --target-dir "$DIST_TARGET_ROOT" -p audiobatch-cli -p audiobatch-gui --bins
 }
 
 write_distribution_xml() {
@@ -192,9 +196,8 @@ package_rust_macos() {
         build_dist_binaries
     fi
 
-    local dist_target_dir="${CARGO_TARGET_DIR:-$REPO/target}/aarch64-apple-darwin/dist"
-    local gui_source="$dist_target_dir/$GUI_BINARY_NAME"
-    local cli_source="$dist_target_dir/$CLI_BINARY_NAME"
+    local gui_source="$DIST_TARGET_DIR/$GUI_BINARY_NAME"
+    local cli_source="$DIST_TARGET_DIR/$CLI_BINARY_NAME"
     if [ ! -f "$gui_source" ]; then
         print_error_and_exit "Built GUI executable not found: $gui_source"
     fi
@@ -204,11 +207,9 @@ package_rust_macos() {
 
     local version
     version=$(get_workspace_version)
-    local cpu_suffix=""
-    if [ "$TARGET_CPU" != "apple-m1" ]; then
-        cpu_suffix="-$TARGET_CPU"
-    fi
-    local output_pkg="$OUTPUT_DIR/AudioBatchRs-${version}${cpu_suffix}.pkg"
+    verify_mac_dist_artifact "$DIST_TARGET_DIR/app-m1.sha256" "$gui_source" "$version" "$NO_BUILD"
+    verify_mac_dist_artifact "$DIST_TARGET_DIR/cli-m1.sha256" "$cli_source" "$version" "$NO_BUILD"
+    local output_pkg="$OUTPUT_DIR/AudioBatchRs-${version}.pkg"
 
     local work_dir
     work_dir=$(mktemp -d "${TMPDIR:-/tmp}/audiobatch-rust-pkg.XXXXXXXX")
