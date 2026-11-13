@@ -373,10 +373,11 @@ void ProcessingToolbarContent::refresh()
     const auto& history = processor.getHistory();
     const bool editing = history.isEditing();
     const bool slotA = presentation.comparisonSlot == 0;
+    // Accessibility can toggle the active button without changing the processor's selection.
+    slotAButton.setToggleState(slotA, juce::dontSendNotification);
+    slotBButton.setToggleState(!slotA, juce::dontSendNotification);
     if (shownSlotA != slotA) {
         shownSlotA = slotA;
-        slotAButton.setToggleState(slotA, juce::dontSendNotification);
-        slotBButton.setToggleState(!slotA, juce::dontSendNotification);
         copyButton.setButtonText(juce::String::fromUTF8(slotA ? "A \xe2\x86\x92 B" : "B \xe2\x86\x92 A"));
         copyButton.setTitle(slotA ? "Copy A to B" : "Copy B to A");
         copyButton.setTooltip(

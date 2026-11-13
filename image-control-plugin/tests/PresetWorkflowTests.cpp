@@ -80,6 +80,60 @@ TEST_F(PresetWorkflowTest, PresetMenuOrdersCommandsAndReflectsSaveAdmission)
     expectPresetMenuEnabled(*toolbar, PresetMenuAction::reconnect, true);
 }
 
+/// Refresh reconciles accessible A/B toggles against the processor without recalling sound or recording history.
+TEST_F(PresetWorkflowTest, ActiveComparisonAccessibilityToggleRestoresExclusiveSelection)
+{
+    openToolbar();
+    toolbar->addToDesktop(0);
+    toolbar->setVisible(true);
+    const auto& content = PresetWorkflowTestAccess(*toolbar).content();
+    auto* slotA = dynamic_cast<juce::Button*>(content.findChildWithID("comparison-a"));
+    auto* slotB = dynamic_cast<juce::Button*>(content.findChildWithID("comparison-b"));
+    ASSERT_NE(slotA, nullptr);
+    ASSERT_NE(slotB, nullptr);
+    auto& history = processor.getHistory();
+    for (const int activeSlot : {0, 1}) {
+        SCOPED_TRACE(activeSlot);
+        if (activeSlot == 1) {
+            ASSERT_TRUE(processor.selectComparisonSlot(activeSlot));
+        }
+        auto sound = processor.getSoundSnapshot();
+        sound.at(OUTPUT_GAIN_ID) = -6.0F;
+        ASSERT_TRUE(processor.loadSoundSnapshot(sound, "First edit"));
+        sound.at(OUTPUT_GAIN_ID) = -9.0F;
+        ASSERT_TRUE(processor.loadSoundSnapshot(sound, "Second edit"));
+        ASSERT_TRUE(history.undo());
+        ASSERT_TRUE(history.canUndo());
+        ASSERT_TRUE(history.canRedo());
+        toolbar->refresh();
+        const auto before = processor.getSoundSnapshot();
+        const auto undoDescription = history.undoDescription();
+        const auto redoDescription = history.redoDescription();
+        const auto generation = history.generation();
+        auto* activeButton = activeSlot == 0 ? slotA : slotB;
+        auto* handler = activeButton->getAccessibilityHandler();
+        ASSERT_NE(handler, nullptr);
+        ASSERT_TRUE(handler->getCurrentState().isChecked());
+        ASSERT_TRUE(handler->getActions().invoke(juce::AccessibilityActionType::toggle));
+        EXPECT_FALSE(activeButton->getToggleState());
+        toolbar->refresh();
+        EXPECT_EQ(slotA->getToggleState(), activeSlot == 0);
+        EXPECT_EQ(slotB->getToggleState(), activeSlot == 1);
+        EXPECT_TRUE(handler->getCurrentState().isChecked());
+        EXPECT_EQ(processor.getActiveComparisonSlot(), activeSlot);
+        EXPECT_TRUE(sameProcessingState(processor.getSoundSnapshot(), before));
+        EXPECT_TRUE(history.canUndo());
+        EXPECT_TRUE(history.canRedo());
+        EXPECT_EQ(history.undoDescription(), undoDescription);
+        EXPECT_EQ(history.redoDescription(), redoDescription);
+        EXPECT_EQ(history.generation(), generation);
+        ASSERT_TRUE(history.redo());
+        EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), -9.0F, 0.001F);
+        ASSERT_TRUE(history.undo());
+        EXPECT_TRUE(sameProcessingState(processor.getSoundSnapshot(), before));
+    }
+}
+
 /// An unnamed sound has an explicit placeholder, and cancelling its inline draft never creates provenance.
 TEST_F(PresetWorkflowTest, UnsavedSelectorUsesInlineNamingAndEscapeDiscardsOnlyTheDraft)
 {
