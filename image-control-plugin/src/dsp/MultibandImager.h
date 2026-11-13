@@ -115,8 +115,30 @@ private:
         std::size_t firstKernel = 0
     );
     void mixPartition(int channels);
+    void mixSettledMonoPartition(
+        const BandGains& midGains,
+        const BandGains& solos,
+        float outputGain,
+        float delta,
+        bool needsSoloDry
+    );
+    void mixSettledStereoPartition(
+        const BandGains& midGains,
+        const BandGains& sideGains,
+        const BandGains& recoveryGains,
+        const BandPans& pans,
+        const BandGains& solos,
+        float outputGain,
+        float delta,
+        bool centred,
+        bool recovering,
+        bool needsSoloDry
+    );
+    void mixSmoothingPartition(bool stereo, bool centred, bool unsoloed, bool recovering, bool needsSoloDry);
     void processPartition();
     void updateCorrelationPartition();
+    void updateSettledCorrelationPartition(bool stereo, bool recovering);
+    void updateSmoothingCorrelationPartition(bool stereo, bool recovering);
 
     /// Audio-thread-owned correlation history with atomically published independent readings.
     BandCorrelation correlation;
@@ -134,6 +156,8 @@ private:
     PartitionedConvolver midConvolver;
     /// Convolver of the side signal.
     PartitionedConvolver sideConvolver;
+    /// Reuses the design FFT, window, and fullband quadrature kernel under designMutex or stopped prepare.
+    CrossoverDesigner crossoverDesigner;
 
     /// Designs kernels during real-time playback. Created in prepare and stopped in release.
     std::unique_ptr<KernelDesignThread> designThread;
@@ -197,6 +221,8 @@ private:
 
     /// Whether this processing pass computes band correlation, set only by the audio thread.
     bool correlationEnabled {false};
+    /// Whether buffers and initial kernels have been prepared and remain valid for processing.
+    bool prepared {false};
     /// Sample rate the imager was prepared for.
     double sampleRate {REFERENCE_SAMPLE_RATE};
     /// Kernel slot the audio thread uses.

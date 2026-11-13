@@ -26,16 +26,17 @@ public:
 
     [[nodiscard]] std::span<const float> getPartition(std::size_t kernel, std::size_t partition) const;
 
-    [[nodiscard]] std::size_t getKernelCount() const;
-    [[nodiscard]] std::size_t getPartitionCount() const;
+    [[nodiscard]] std::size_t getComponentStride() const noexcept;
+    [[nodiscard]] std::size_t getKernelCount() const noexcept;
+    [[nodiscard]] std::size_t getPartitionCount() const noexcept;
 
 private:
     /// Split complex spectrum of every partition of every kernel, kernel by kernel:
-    /// the real parts of a partition's bins followed by their imaginary parts.
+    /// the padded real parts of a partition's bins followed by their padded imaginary parts.
     std::vector<float> spectra;
 
-    /// Floats in one partition spectrum: twice the number of non-negative frequency bins.
-    std::size_t binValues {0};
+    /// Padded floats per real or imaginary component array, rounded up to an 8-float SIMD multiple.
+    std::size_t componentStride {0};
     /// Number of kernels.
     std::size_t kernelCount {0};
     /// Number of partitions of each kernel.
@@ -52,23 +53,27 @@ public:
     void convolve(const KernelSpectra& kernels, std::size_t kernel, std::span<float> output);
     void prepare(int samplesPerPartition, std::size_t kernelPartitions);
     void pushInput(std::span<const float> input);
-    void reset();
+    void reset() noexcept;
 
 private:
     /// Transform of twice the partition size, created in prepare.
     std::unique_ptr<juce::dsp::FFT> fft;
 
-    /// Accumulates the split complex spectrum of one kernel's output.
-    std::vector<float> accumulator;
+    /// Accumulates the real part of one kernel's output spectrum.
+    std::vector<float> accumulatorReal;
+    /// Accumulates the imaginary part of one kernel's output spectrum.
+    std::vector<float> accumulatorImaginary;
     /// Split complex spectra of the most recent input partitions, as a ring with the newest at newestPartition.
     std::vector<float> history;
-    /// The previous and the current input partition, which overlap-save transforms together.
-    std::vector<float> inputWindow;
+    /// Previous input partition, transformed ahead of the incoming partition for overlap-save.
+    std::vector<float> previousInput;
     /// FFT input and output, twice the FFT size as JUCE requires.
     std::vector<float> workspace;
 
-    /// Floats in one partition spectrum: twice the number of non-negative frequency bins.
-    std::size_t binValues {0};
+    /// Non-negative frequency bins in one partition spectrum.
+    std::size_t binCount {0};
+    /// Padded floats per real or imaginary component array, rounded up to an 8-float SIMD multiple.
+    std::size_t componentStride {0};
     /// Ring index of the newest input partition spectrum.
     std::size_t newestPartition {0};
     /// Number of partitions of the kernels, and of input spectra kept.

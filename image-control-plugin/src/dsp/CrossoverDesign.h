@@ -5,6 +5,11 @@
 
 #pragma once
 
+#include "Parameters.h"
+
+#include <juce_dsp/juce_dsp.h>
+
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -17,6 +22,34 @@ constexpr double TRANSITION_OCTAVES {1.0};
 constexpr int REFERENCE_HALF_LENGTH {4096};
 /// Sample rate up to which REFERENCE_HALF_LENGTH applies. Higher rates double it per doubling of the rate.
 constexpr double REFERENCE_SAMPLE_RATE {48'000.0};
+
+/// Precomputes the shared design FFT, Blackman-Harris window,
+/// and crossover-independent fullband quadrature kernel for one prepared sample rate
+/// so real-time background and offline crossover designs reuse invariant state.
+class CrossoverDesigner
+{
+public:
+    [[nodiscard]] std::vector<std::vector<float>> designKernelSet(const Crossovers& crossovers);
+    void prepare(double newSampleRate, int newHalfLength);
+
+private:
+    /// Shared inverse transform of size halfLength * 4, created in prepare.
+    std::unique_ptr<juce::dsp::FFT> fft;
+    /// Reusable interleaved FFT spectrum buffers for one ordinary/quadrature pair.
+    std::vector<float> lowpassSpectrum;
+    /// Reusable interleaved FFT spectrum buffer for the quadrature partner.
+    std::vector<float> quadratureSpectrum;
+    /// Precomputed fullband quadrature kernel for the prepared sample rate and half length.
+    std::vector<float> fullQuadratureKernel;
+    /// Reusable unnormalized double-precision taps for ordinary lowpass DC normalization.
+    std::vector<double> lowpassTaps;
+    /// Precomputed symmetric four-term Blackman-Harris window of length 2 * halfLength + 1.
+    std::vector<double> window;
+    /// Sample rate the designer was prepared for.
+    double sampleRate {REFERENCE_SAMPLE_RATE};
+    /// Kernel half length, in samples.
+    int halfLength {REFERENCE_HALF_LENGTH};
+};
 
 [[nodiscard]] std::vector<float> designLowpassKernel(double crossover, double sampleRate, int halfLength);
 [[nodiscard]] std::vector<float> designQuadratureKernel(

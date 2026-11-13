@@ -19,30 +19,50 @@ namespace esgrove::image_control
 {
 namespace
 {
+/// Alignment granularity in floats so each split real and imaginary plane stays 32-byte SIMD-aligned.
+constexpr std::size_t SIMD_FLOAT_LANES {8};
+
+/// Rounds a bin count up to the next multiple of SIMD_FLOAT_LANES.
+constexpr std::size_t paddedComponentStride(const std::size_t bins) noexcept
+{
+    return (bins + SIMD_FLOAT_LANES - 1) & ~(SIMD_FLOAT_LANES - 1);
+}
+
 /// Returns the FFT order for transforms of twice the partition size.
 int fftOrderForPartition(const int partitionSize)
 {
     return juce::roundToInt(std::log2(static_cast<double>(partitionSize) * 2.0));
 }
 
-/// Copies JUCE's interleaved spectrum, real and imaginary part per bin, into the split layout:
-/// the real parts of all bins, then the imaginary parts.
-void splitComplex(const std::span<const float> interleaved, const std::span<float> split)
+/// Copies JUCE's interleaved spectrum into zero-padded split planes: real bins, then imaginary bins.
+void splitComplex(
+    const std::span<const float> interleaved,
+    const std::span<float> split,
+    const std::size_t bins,
+    const std::size_t stride
+)
 {
-    const std::size_t bins = split.size() / 2;
+    const auto real = split.first(stride);
+    const auto imaginary = split.subspan(stride, stride);
     for (std::size_t bin = 0; bin < bins; ++bin) {
-        split[bin] = interleaved[bin * 2];
-        split[bins + bin] = interleaved[bin * 2 + 1];
+        real[bin] = interleaved[bin * 2];
+        imaginary[bin] = interleaved[bin * 2 + 1];
     }
+    std::fill(real.begin() + static_cast<std::ptrdiff_t>(bins), real.end(), 0.0F);
+    std::fill(imaginary.begin() + static_cast<std::ptrdiff_t>(bins), imaginary.end(), 0.0F);
 }
 
-/// Copies a split spectrum back into JUCE's interleaved layout.
-void interleaveComplex(const std::span<const float> split, const std::span<float> interleaved)
+/// Copies split real and imaginary bin planes back into JUCE's interleaved layout.
+void interleaveComplex(
+    const std::span<const float> real,
+    const std::span<const float> imaginary,
+    const std::span<float> interleaved,
+    const std::size_t bins
+)
 {
-    const std::size_t bins = split.size() / 2;
     for (std::size_t bin = 0; bin < bins; ++bin) {
-        interleaved[bin * 2] = split[bin];
-        interleaved[bin * 2 + 1] = split[bins + bin];
+        interleaved[bin * 2] = real[bin];
+        interleaved[bin * 2 + 1] = imaginary[bin];
     }
 }
 }  // namespace
@@ -58,9 +78,11 @@ KernelSpectra::KernelSpectra(const std::span<const std::vector<float>> kernels, 
     const auto fftSize = static_cast<std::size_t>(fft.getSize());
     const std::size_t kernelLength = kernels.empty() ? 0 : kernels.front().size();
 
-    binValues = (fftSize / 2 + 1) * 2;
+    const std::size_t bins = fftSize / 2 + 1;
+    componentStride = paddedComponentStride(bins);
+    const std::size_t partitionValues = componentStride * 2;
     partitionCount = (kernelLength + partitionTaps - 1) / partitionTaps;
-    spectra.assign(kernelCount * partitionCount * binValues, 0.0F);
+    spectra.assign(kernelCount * partitionCount * partitionValues, 0.0F);
 
     std::vector<float> workspace(fftSize * 2);
     for (std::size_t kernel = 0; kernel < kernelCount; ++kernel) {
@@ -72,29 +94,40 @@ KernelSpectra::KernelSpectra(const std::span<const std::vector<float>> kernels, 
             const std::size_t count = std::min(partitionTaps, kernelLength - first);
             std::copy_n(taps.begin() + static_cast<std::ptrdiff_t>(first), count, workspace.begin());
             fft.performRealOnlyForwardTransform(workspace.data(), true);
-            const auto destination = (kernel * partitionCount + partition) * binValues;
+            const auto destination = (kernel * partitionCount + partition) * partitionValues;
             splitComplex(
-                std::span<const float>(workspace).first(binValues),
-                std::span<float>(spectra).subspan(destination, binValues)
+                std::span<const float>(workspace).first(bins * 2),
+                std::span<float>(spectra).subspan(destination, partitionValues),
+                bins,
+                componentStride
             );
         }
     }
 }
 
-/// Returns the split complex spectrum of one partition of one kernel: the real parts, then the imaginary parts.
+/// Returns the padded split complex spectrum of one partition of one kernel: real plane, then imaginary plane.
 std::span<const float> KernelSpectra::getPartition(const std::size_t kernel, const std::size_t partition) const
 {
-    return std::span<const float>(spectra).subspan((kernel * partitionCount + partition) * binValues, binValues);
+    const std::size_t partitionValues = componentStride * 2;
+    return std::span<const float>(spectra).subspan(
+        (kernel * partitionCount + partition) * partitionValues, partitionValues
+    );
+}
+
+/// Returns the padded float stride of each real or imaginary component plane.
+std::size_t KernelSpectra::getComponentStride() const noexcept
+{
+    return componentStride;
 }
 
 /// Returns the number of kernels.
-std::size_t KernelSpectra::getKernelCount() const
+std::size_t KernelSpectra::getKernelCount() const noexcept
 {
     return kernelCount;
 }
 
 /// Returns the number of partitions of each kernel.
-std::size_t KernelSpectra::getPartitionCount() const
+std::size_t KernelSpectra::getPartitionCount() const noexcept
 {
     return partitionCount;
 }
@@ -107,19 +140,21 @@ void PartitionedConvolver::prepare(const int samplesPerPartition, const std::siz
     const auto fftSize = static_cast<std::size_t>(fft->getSize());
     partitionSize = static_cast<std::size_t>(samplesPerPartition);
     partitionCount = kernelPartitions;
-    binValues = (fftSize / 2 + 1) * 2;
-    accumulator.assign(binValues, 0.0F);
-    history.assign(partitionCount * binValues, 0.0F);
-    inputWindow.assign(fftSize, 0.0F);
+    binCount = fftSize / 2 + 1;
+    componentStride = paddedComponentStride(binCount);
+    accumulatorReal.assign(componentStride, 0.0F);
+    accumulatorImaginary.assign(componentStride, 0.0F);
+    history.assign(partitionCount * componentStride * 2, 0.0F);
+    previousInput.assign(partitionSize, 0.0F);
     workspace.assign(fftSize * 2, 0.0F);
     reset();
 }
 
 /// Clears the input history, as if the signal had been silent.
-void PartitionedConvolver::reset()
+void PartitionedConvolver::reset() noexcept
 {
     std::ranges::fill(history, 0.0F);
-    std::ranges::fill(inputWindow, 0.0F);
+    std::ranges::fill(previousInput, 0.0F);
     newestPartition = 0;
 }
 
@@ -128,17 +163,22 @@ void PartitionedConvolver::reset()
 void PartitionedConvolver::pushInput(const std::span<const float> input)
 {
     jassert(input.size() == partitionSize);
-    std::copy_n(inputWindow.begin() + static_cast<std::ptrdiff_t>(partitionSize), partitionSize, inputWindow.begin());
-    std::ranges::copy(input, inputWindow.begin() + static_cast<std::ptrdiff_t>(partitionSize));
-
-    std::ranges::copy(inputWindow, workspace.begin());
-    std::fill(workspace.begin() + static_cast<std::ptrdiff_t>(inputWindow.size()), workspace.end(), 0.0F);
+    std::ranges::copy(previousInput, workspace.begin());
+    std::ranges::copy(input, workspace.begin() + static_cast<std::ptrdiff_t>(partitionSize));
+    std::ranges::copy(input, previousInput.begin());
+    std::fill(workspace.begin() + static_cast<std::ptrdiff_t>(partitionSize * 2), workspace.end(), 0.0F);
     fft->performRealOnlyForwardTransform(workspace.data(), true);
 
-    newestPartition = (newestPartition + 1) % partitionCount;
+    if (partitionCount == 0) {
+        return;
+    }
+    newestPartition = newestPartition + 1 == partitionCount ? 0 : newestPartition + 1;
+    const std::size_t partitionValues = componentStride * 2;
     splitComplex(
-        std::span<const float>(workspace).first(binValues),
-        std::span<float>(history).subspan(newestPartition * binValues, binValues)
+        std::span<const float>(workspace).first(binCount * 2),
+        std::span<float>(history).subspan(newestPartition * partitionValues, partitionValues),
+        binCount,
+        componentStride
     );
 }
 
@@ -148,30 +188,33 @@ void PartitionedConvolver::pushInput(const std::span<const float> input)
 void PartitionedConvolver::convolve(const KernelSpectra& kernels, const std::size_t kernel, std::span<float> output)
 {
     jassert(kernels.getPartitionCount() == partitionCount);
+    jassert(kernels.getComponentStride() == componentStride);
     jassert(output.size() == partitionSize);
 
-    std::ranges::fill(accumulator, 0.0F);
-    // Equal-sized component spans expose the common bin bound to the optimizer.
-    // Whether checks are eliminated or arithmetic is vectorized depends on the compiler and build settings.
-    const std::size_t bins = binValues / 2;
-    const auto sumReal = std::span<float>(accumulator).first(bins);
-    const auto sumImaginary = std::span<float>(accumulator).subspan(bins).first(bins);
+    std::ranges::fill(accumulatorReal, 0.0F);
+    std::ranges::fill(accumulatorImaginary, 0.0F);
+    const std::size_t stride = componentStride;
+    const std::size_t partitionValues = stride * 2;
+    const auto sumReal = std::span<float>(accumulatorReal).first(stride);
+    const auto sumImaginary = std::span<float>(accumulatorImaginary).first(stride);
+    std::size_t slot = newestPartition;
     for (std::size_t partition = 0; partition < partitionCount; ++partition) {
-        const std::size_t slot = (newestPartition + partitionCount - partition) % partitionCount;
-        const auto input = std::span<const float>(history).subspan(slot * binValues, binValues);
+        const auto input = std::span<const float>(history).subspan(slot * partitionValues, partitionValues);
         const auto taps = kernels.getPartition(kernel, partition);
-        const auto inputReal = input.first(bins);
-        const auto inputImaginary = input.subspan(bins).first(bins);
-        const auto tapReal = taps.first(bins);
-        const auto tapImaginary = taps.subspan(bins).first(bins);
-        for (std::size_t bin = 0; bin < bins; ++bin) {
+        const auto inputReal = input.first(stride);
+        const auto inputImaginary = input.subspan(stride, stride);
+        const auto tapReal = taps.first(stride);
+        const auto tapImaginary = taps.subspan(stride, stride);
+        for (std::size_t bin = 0; bin < stride; ++bin) {
             sumReal[bin] += inputReal[bin] * tapReal[bin] - inputImaginary[bin] * tapImaginary[bin];
             sumImaginary[bin] += inputReal[bin] * tapImaginary[bin] + inputImaginary[bin] * tapReal[bin];
         }
+        slot = slot == 0 ? partitionCount - 1 : slot - 1;
     }
 
-    interleaveComplex(accumulator, std::span<float>(workspace).first(binValues));
-    std::fill(workspace.begin() + static_cast<std::ptrdiff_t>(binValues), workspace.end(), 0.0F);
+    const std::size_t interleavedValues = binCount * 2;
+    interleaveComplex(sumReal, sumImaginary, std::span<float>(workspace).first(interleavedValues), binCount);
+    std::fill(workspace.begin() + static_cast<std::ptrdiff_t>(interleavedValues), workspace.end(), 0.0F);
     fft->performRealOnlyInverseTransform(workspace.data());
     std::copy_n(workspace.begin() + static_cast<std::ptrdiff_t>(partitionSize), partitionSize, output.begin());
 }

@@ -58,6 +58,12 @@ constexpr float TWO_DECIMALS_BELOW_KILOHERTZ {10.0F};
 constexpr float TENTHS_PER_DECIBEL {10.0F};
 /// Step of the gain parameters in dB.
 constexpr float GAIN_STEP_DB {0.01F};
+/// Precomputed upper bounds for each ordered crossover so neighboring bands stay at least MIN_CROSSOVER_RATIO apart.
+constexpr std::array<float, CROSSOVER_COUNT> CROSSOVER_UPPER_LIMITS {
+    MAX_FREQUENCY / (MIN_CROSSOVER_RATIO * MIN_CROSSOVER_RATIO),
+    MAX_FREQUENCY / MIN_CROSSOVER_RATIO,
+    MAX_FREQUENCY,
+};
 
 /// Text grammar and host metadata of a finite parameter.
 enum class ParameterKind : std::uint8_t { frequency, gain, pan, width, recovery, boolean };
@@ -505,8 +511,7 @@ Crossovers orderCrossovers(const Crossovers& requested)
     Crossovers ordered {};
     float lowerLimit = MIN_FREQUENCY;
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        const auto crossoversAbove = static_cast<float>(CROSSOVER_COUNT - 1 - crossover);
-        const float upperLimit = MAX_FREQUENCY / std::pow(MIN_CROSSOVER_RATIO, crossoversAbove);
+        const float upperLimit = CROSSOVER_UPPER_LIMITS.at(crossover);
         const auto frequency
             = std::isfinite(requested.at(crossover)) ? requested.at(crossover) : DEFAULT_CROSSOVERS.at(crossover);
         ordered.at(crossover) = std::clamp(frequency, lowerLimit, upperLimit);
@@ -601,7 +606,13 @@ float plainValue(const juce::RangedAudioParameter& parameter)
 /// Processing and analysis lengths double with each doubling, so their frequency resolution stays the same.
 int sampleRateDoublings(const double sampleRate, const double referenceSampleRate)
 {
-    return std::max(0, static_cast<int>(std::ceil(std::log2(sampleRate / referenceSampleRate))));
+    if (!std::isfinite(sampleRate) || !std::isfinite(referenceSampleRate) || sampleRate <= 0.0
+        || referenceSampleRate <= 0.0 || sampleRate <= referenceSampleRate)
+    {
+        return 0;
+    }
+    constexpr double maxDoublings {16.0};
+    return static_cast<int>(std::min(maxDoublings, std::ceil(std::log2(sampleRate / referenceSampleRate))));
 }
 
 /// Sets a parameter to a plain value in a host change gesture of its own.
