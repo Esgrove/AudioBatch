@@ -112,6 +112,9 @@ impl AppView {
                 .roots
                 .iter()
                 .any(|existing| existing == &path || (existing.is_dir() && path.starts_with(existing)));
+            // Folder deduplication must not swallow an explicit file request beneath that folder.
+            // A removed or newly created file still needs a scan, without adding a redundant root.
+            added |= covered && path.is_file() && has_supported_extension(&path);
             if !covered {
                 log_open_path(&path);
                 if path.is_dir() {

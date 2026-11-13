@@ -578,6 +578,10 @@ fn integration_manifest_controls_exist_with_roles(cx: &mut TestAppContext) {
 /// and then an audio file onto the window through the platform file-drop events,
 /// so the window's own drop target handles each drop.
 /// The C++ `DropFilesAndFolders` case drops the same inputs in the same order.
+#[expect(
+    clippy::too_many_lines,
+    reason = "One workflow verifies folder coverage and both explicit file entry points"
+)]
 #[gpui_kit::test]
 async fn integration_drop_files_and_folders(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
@@ -620,7 +624,7 @@ async fn integration_drop_files_and_folders(cx: &mut TestAppContext) {
         .canonicalize()
         .expect("canonical nested folder");
     let second = nested_root.join("inner/second.wav");
-    drop(vec![nested_root], cx);
+    drop(vec![nested_root.clone()], cx);
     let view = workflow.view.clone();
     cx.wait_for(workflow.window, Duration::from_secs(30), move |_, cx| {
         std::thread::yield_now();
@@ -644,6 +648,49 @@ async fn integration_drop_files_and_folders(cx: &mut TestAppContext) {
         assert!(table.row_for(&first).is_some());
         assert!(table.row_for(&second).is_some());
     });
+    for through_picker in [true, false] {
+        workflow.select(&second, cx);
+        workflow.dispatch(RemoveSelected, cx);
+        cx.read(|cx| assert!(workflow.view.read(cx).excluded.contains(&second)));
+        if through_picker {
+            workflow.add(vec![second.clone()], cx);
+        } else {
+            drop(vec![second.clone()], cx);
+        }
+        workflow.idle(cx).await;
+        cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            let table = view.table.read(cx).delegate();
+            assert_eq!(table.len(), 2);
+            assert!(table.row_for(&second).is_some());
+            assert!(table.row_for(&first).is_some());
+            assert!(!view.excluded.contains(&second));
+            assert_eq!(view.roots, [nested_root.clone(), first.clone()]);
+        });
+    }
+    for through_picker in [true, false] {
+        let new = nested_root.join(if through_picker {
+            "new-picker.wav"
+        } else {
+            "new-drop.wav"
+        });
+        fs::copy(test_fixtures::fixture("sine_mono_44100_16.wav"), &new).expect("new nested source");
+        if through_picker {
+            workflow.add(vec![new.clone()], cx);
+        } else {
+            drop(vec![new.clone()], cx);
+        }
+        workflow.idle(cx).await;
+        cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            let table = view.table.read(cx).delegate();
+            assert_eq!(table.len(), if through_picker { 3 } else { 4 });
+            assert!(table.row_for(&new).is_some());
+            assert!(table.row_for(&second).is_some());
+            assert!(table.row_for(&first).is_some());
+            assert_eq!(view.roots, [nested_root.clone(), first.clone()]);
+        });
+    }
 }
 
 /// Switches the normalization mode, toggles overwrite and normalizing before the plugins through their controls,
