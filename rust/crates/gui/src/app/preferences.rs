@@ -7,6 +7,10 @@
 //! and syncs an open settings window with what was actually applied.
 
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
 
 use audiobatch_playback::{OutputConfig, Player, device_capabilities};
 use gpui_kit::{
@@ -25,6 +29,42 @@ use crate::waveform::CueMarker;
 /// The width keeps the loudness graph checkbox and both range fields on one row without squeezing the checkbox label.
 const SETTINGS_MINIMUM_SIZE: (f32, f32) = (520.0, 260.0);
 
+/// CPAL exposes no output-list notification, so macOS refreshes at a bounded background cadence.
+#[cfg(target_os = "macos")]
+const OUTPUT_DEVICE_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Owns one background enumeration until it returns, even when its result becomes obsolete.
+#[cfg(target_os = "macos")]
+pub(super) struct DeviceRefresh {
+    generation: u64,
+    active: bool,
+    stopped: bool,
+    next: Instant,
+    enumerate: Arc<dyn Fn() -> Result<Vec<String>, String> + Send + Sync>,
+}
+
+#[cfg(target_os = "macos")]
+impl Default for DeviceRefresh {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            active: false,
+            stopped: false,
+            next: Instant::now() + OUTPUT_DEVICE_REFRESH_INTERVAL,
+            enumerate: Arc::new(|| {
+                #[cfg(test)]
+                {
+                    Ok(Vec::new())
+                }
+                #[cfg(not(test))]
+                {
+                    Player::try_output_device_names().map_err(|error| error.to_string())
+                }
+            }),
+        }
+    }
+}
+
 /// The open settings window and the subscription to its changes.
 pub(super) struct SettingsWindow {
     handle: AnyWindowHandle,
@@ -33,6 +73,70 @@ pub(super) struct SettingsWindow {
 }
 
 impl AppView {
+    /// Reports the actual open settings view for hardware-free observation of its controls.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(super) fn test_settings_view(&self) -> Entity<SettingsView> {
+        self.settings_window
+            .as_ref()
+            .expect("settings window")
+            .view
+            .upgrade()
+            .expect("settings view")
+    }
+
+    /// Polls device names off the UI thread without replacing playback or overlapping a blocked enumeration.
+    #[cfg(target_os = "macos")]
+    pub(super) fn poll_output_devices(&mut self, now: Instant, cx: &Context<Self>) {
+        let refresh = &mut self.device_refresh;
+        if refresh.stopped || refresh.active || now < refresh.next {
+            return;
+        }
+        refresh.active = true;
+        let generation = refresh.generation;
+        let enumerate = Arc::clone(&refresh.enumerate);
+        self.device_refresh_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx.background_executor().spawn(async move { enumerate() }).await;
+            let _ = this.update(cx, |view, cx| {
+                let refresh = &mut view.device_refresh;
+                refresh.active = false;
+                refresh.next = Instant::now() + OUTPUT_DEVICE_REFRESH_INTERVAL;
+                if refresh.stopped || refresh.generation != generation {
+                    return;
+                }
+                if let Ok(names) = result
+                    && view.menu_state.output_devices != names
+                {
+                    view.menu_state.output_devices = names;
+                    view.refresh_menus(cx);
+                    view.sync_settings_window(cx);
+                }
+            });
+        }));
+    }
+
+    /// Replaces only the enumeration boundary in tests, keeping the production timer and completion lifecycle.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(super) fn set_test_device_enumerator(
+        &mut self,
+        enumerate: Arc<dyn Fn() -> Result<Vec<String>, String> + Send + Sync>,
+    ) {
+        self.device_refresh.enumerate = enumerate;
+        self.device_refresh.next = Instant::now();
+    }
+
+    /// Reports the production worker's admission slot for bounded hardware-free waits.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(super) const fn device_refresh_active(&self) -> bool {
+        self.device_refresh.active
+    }
+
+    /// Rejects an older enumeration without releasing its occupied worker slot.
+    #[cfg(target_os = "macos")]
+    pub(super) const fn invalidate_device_refresh(&mut self, stopping: bool) {
+        self.device_refresh.generation = self.device_refresh.generation.wrapping_add(1);
+        self.device_refresh.stopped |= stopping;
+    }
+
     /// Opens settings on the main window's display, or brings the existing settings window to the front.
     /// Session dimensions are clamped to the target display's visible bounds when centered.
     pub(super) fn open_settings_window(&mut self, window: &Window, cx: &mut Context<Self>) {
@@ -302,11 +406,7 @@ impl AppView {
     fn settings_snapshot(&self) -> SettingsSnapshot {
         let device = self.player.as_ref().map(|player| player.device_name().to_string());
         SettingsSnapshot {
-            devices: if cfg!(test) {
-                Vec::new()
-            } else {
-                Player::output_device_names()
-            },
+            devices: self.menu_state.output_devices.clone(),
             capabilities: if cfg!(test) {
                 None
             } else {
@@ -337,6 +437,8 @@ impl AppView {
     /// # Errors
     /// Returns the error of the configuration that could not be opened.
     fn reopen_player(&mut self, output: &OutputConfig, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        self.invalidate_device_refresh(false);
         let resume = self.player.as_ref().and_then(|player| {
             player
                 .loaded_path()

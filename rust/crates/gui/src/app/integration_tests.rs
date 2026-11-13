@@ -1365,6 +1365,141 @@ fn integration_old_column_choices_hide_path_once(cx: &mut TestAppContext) {
     });
 }
 
+/// Exercises macOS discovery through injected enumeration only, never touching physical devices or playback.
+#[cfg(target_os = "macos")]
+#[gpui_kit::test]
+async fn integration_device_refresh_preserves_snapshot_on_failure_and_clears_empty_success(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    for (result, expected) in [
+        (Ok(vec!["First".to_owned()]), vec!["First".to_owned()]),
+        (
+            Ok(vec!["First".to_owned(), "Second".to_owned()]),
+            vec!["First".to_owned(), "Second".to_owned()],
+        ),
+        (Ok(vec!["Second".to_owned()]), vec!["Second".to_owned()]),
+        (Ok(vec!["Second".to_owned()]), vec!["Second".to_owned()]),
+        (Err("enumeration failed".to_owned()), vec!["Second".to_owned()]),
+        (Ok(Vec::new()), Vec::new()),
+    ] {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&calls);
+        cx.update(|cx| {
+            workflow.view.update(cx, |view, cx| {
+                view.set_test_device_enumerator(Arc::new(move || {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    result.clone()
+                }));
+                view.poll_output_devices(std::time::Instant::now(), cx);
+            });
+        });
+        cx.wait_for(workflow.window, Duration::from_secs(2), |_, cx| {
+            !workflow.view.read(cx).device_refresh_active()
+        })
+        .await;
+        cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            assert_eq!(view.menu_state.output_devices, expected);
+            assert!(view.player.is_none());
+            assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        });
+        cx.update(|cx| {
+            workflow
+                .view
+                .update(cx, |view, cx| view.poll_output_devices(std::time::Instant::now(), cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "throttled between completions"
+        );
+    }
+}
+
+/// A settings window opened during discovery receives the completed device list through its real selector.
+#[cfg(target_os = "macos")]
+#[gpui_kit::test]
+async fn integration_device_refresh_updates_an_already_open_settings_window(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let (release, wait) = crossbeam_channel::bounded(1);
+    cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            view.menu_state.output_devices = vec!["Original output".into()];
+            view.set_test_device_enumerator(Arc::new(move || {
+                wait.recv_timeout(Duration::from_secs(5)).expect("release discovery");
+                Ok(vec!["New output".into()])
+            }));
+            view.poll_output_devices(std::time::Instant::now(), cx);
+        });
+    });
+    cx.update_window(workflow.window, |_, window, cx| {
+        workflow
+            .view
+            .update(cx, |view, cx| view.open_settings_window(window, cx));
+    })
+    .expect("open production Settings while discovery is pending");
+    let settings_window = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|window| *window != workflow.window)
+            .expect("Audio Settings window")
+    });
+    release.send(()).expect("finish discovery");
+    cx.wait_for(workflow.window, Duration::from_secs(2), |_, cx| {
+        !workflow.view.read(cx).device_refresh_active()
+    })
+    .await;
+    let settings_view = cx.read(|cx| workflow.view.read(cx).test_settings_view());
+    cx.update_window(settings_window, |_, window, cx| {
+        settings_view.update(cx, |view, cx| {
+            assert!(view.test_has_output_device("New output", window, cx));
+            assert!(!view.test_has_output_device("Original output", window, cx));
+        });
+    })
+    .expect("refreshed output choices");
+    cx.read(|cx| assert!(workflow.view.read(cx).player.is_none()));
+}
+
+/// A blocked enumeration retains its single slot while stale and quit results are rejected.
+#[cfg(target_os = "macos")]
+#[gpui_kit::test]
+async fn integration_device_refresh_rejects_stale_blocked_and_quit_results(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    for stopping in [false, true] {
+        let (release, wait) = crossbeam_channel::bounded(1);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&calls);
+        cx.update(|cx| {
+            workflow.view.update(cx, |view, cx| {
+                view.menu_state.output_devices = vec!["Retained".into()];
+                view.set_test_device_enumerator(Arc::new(move || {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    wait.recv_timeout(Duration::from_secs(5))
+                        .expect("bounded blocked enumeration");
+                    Ok(vec!["Obsolete".into()])
+                }));
+                view.poll_output_devices(std::time::Instant::now(), cx);
+                view.invalidate_device_refresh(stopping);
+                view.poll_output_devices(std::time::Instant::now() + Duration::from_secs(10), cx);
+                assert!(view.device_refresh_active());
+            });
+        });
+        release.send(()).expect("release enumeration");
+        cx.wait_for(workflow.window, Duration::from_secs(2), |_, cx| {
+            !workflow.view.read(cx).device_refresh_active()
+        })
+        .await;
+        cx.read(|cx| assert_eq!(workflow.view.read(cx).menu_state.output_devices, ["Retained"]));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+    cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            view.poll_output_devices(std::time::Instant::now() + Duration::from_secs(10), cx);
+            assert!(!view.device_refresh_active());
+        });
+    });
+}
+
 /// Opens copied valid and broken inputs through the file picker and waits for real workers to reach idle.
 #[gpui_kit::test]
 async fn integration_open_valid_and_broken_files_reaches_idle(cx: &mut TestAppContext) {

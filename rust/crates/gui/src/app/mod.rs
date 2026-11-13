@@ -149,6 +149,11 @@ pub struct AppView {
     /// The Plugin Manager window while it is open.
     manager_window: Option<PluginWindow<ManagerView>>,
     player: Option<Player>,
+    /// macOS output-list discovery never owns or reopens the playback device.
+    #[cfg(target_os = "macos")]
+    device_refresh: preferences::DeviceRefresh,
+    #[cfg(target_os = "macos")]
+    device_refresh_task: Option<Task<()>>,
     /// Folders and files the list is built from.
     roots: Vec<PathBuf>,
     /// Files removed from the list, which later scans of the same folders leave out.
@@ -358,6 +363,10 @@ impl AppView {
             chain_window: None,
             manager_window: None,
             player,
+            #[cfg(target_os = "macos")]
+            device_refresh: preferences::DeviceRefresh::default(),
+            #[cfg(target_os = "macos")]
+            device_refresh_task: None,
             roots: Vec::new(),
             excluded: HashSet::new(),
             run: None,
@@ -449,6 +458,8 @@ impl AppView {
 
     /// Invalidates readers and drains ordered explicit gains off the message thread before application quit.
     fn prepare_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        #[cfg(target_os = "macos")]
+        self.invalidate_device_refresh(true);
         if let Some((stop, _)) = &self.cache_prune {
             stop.store(true, Ordering::Release);
         }

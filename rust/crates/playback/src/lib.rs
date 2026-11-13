@@ -614,10 +614,16 @@ impl Player {
     /// Returns the names of the available output devices, using ASIO on Windows.
     #[must_use]
     pub fn output_device_names() -> Vec<String> {
-        output_devices().map_or_else(
-            |_| Vec::new(),
-            |devices| devices.iter().map(device_display_name).collect(),
-        )
+        Self::try_output_device_names().unwrap_or_default()
+    }
+
+    /// Enumerates output names without opening a stream, preserving failures separately from an empty host.
+    /// Windows callers must stay on the player owner thread to reuse its cached ASIO discovery.
+    ///
+    /// # Errors
+    /// Returns the host's enumeration failure without discarding a caller's previous snapshot.
+    pub fn try_output_device_names() -> Result<Vec<String>, DeviceError> {
+        output_devices().map(|devices| devices.iter().map(device_display_name).collect())
     }
 
     /// Opens and starts the output stream unless it is open.
