@@ -97,6 +97,8 @@ pub enum Kind {
     FlushFailing,
     /// Stops processing after a reload trigger until its component is reconstructed.
     ReloadRequired,
+    /// Rejects its first activation, then accepts subsequent attempts.
+    ActivationRetry,
 }
 
 /// One call logged by a recorder plugin.
@@ -110,7 +112,7 @@ pub struct RecordedCall {
 
 impl Kind {
     /// Every kind, in the order the factory lists them.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Gain,
         Self::Delay,
         Self::Echo,
@@ -122,6 +124,7 @@ impl Kind {
         Self::ManyParameters,
         Self::FlushFailing,
         Self::ReloadRequired,
+        Self::ActivationRetry,
     ];
 
     /// Returns the class id of the plugin's component.
@@ -139,6 +142,7 @@ impl Kind {
             Self::ManyParameters => 9,
             Self::FlushFailing => 10,
             Self::ReloadRequired => 11,
+            Self::ActivationRetry => 12,
         };
         uid(0x5A1C_0000, 0x0000_4000, 0x8000_0000, index)
     }
@@ -158,6 +162,7 @@ impl Kind {
             Self::ManyParameters => "Test Many Parameters",
             Self::FlushFailing => "Test Flush Failing",
             Self::ReloadRequired => "Test Reload Required",
+            Self::ActivationRetry => "Test Activation Retry",
         }
     }
 
@@ -174,7 +179,8 @@ impl Kind {
             | Self::Failing
             | Self::ManyParameters
             | Self::FlushFailing
-            | Self::ReloadRequired => "Fx|Dynamics",
+            | Self::ReloadRequired
+            | Self::ActivationRetry => "Fx|Dynamics",
         }
     }
 
