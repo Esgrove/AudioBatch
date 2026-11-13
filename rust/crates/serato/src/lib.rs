@@ -27,6 +27,12 @@ pub use overview::{
     BAND_COUNT, MAXIMUM_SLICES, OVERVIEW_PARSER_VERSION, OVERVIEW_TAG_KIND, Overview, OverviewError, Slice,
 };
 
+/// Highest record or duplicate count accepted for bounded Serato tags, matching the C++ parser contract.
+pub const MAXIMUM_RECORDS: usize = 4096;
+
+/// Largest raw Serato tag payload accepted in bytes, matching the C++ parser contract.
+pub const MAXIMUM_PAYLOAD_BYTES: usize = 2 + MAXIMUM_SLICES * BAND_COUNT;
+
 /// Serato tag types, identified by the GEOB frame description.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum SeratoTag {
@@ -126,6 +132,7 @@ impl SeratoData {
         let mut data = Self::default();
         let mut found_any = false;
         let mut selected = BTreeSet::new();
+        let mut counts = BTreeMap::new();
         let mut errors = BTreeMap::new();
         let mut legacy = Vec::new();
         for (description, bytes) in frames {
@@ -134,11 +141,24 @@ impl SeratoData {
             };
             found_any = true;
             if description == "Serato Markers_" {
-                legacy.push(bytes);
+                if legacy.len() < MAXIMUM_RECORDS {
+                    legacy.push(bytes);
+                } else {
+                    errors
+                        .entry(SeratoTag::Markers)
+                        .or_insert_with(|| String::from("Too many legacy marker frames"));
+                }
                 continue;
             }
             if selected.contains(&tag) {
                 continue;
+            }
+            if tag != SeratoTag::Overview {
+                let count = counts.entry(tag).or_insert(0_usize);
+                if *count >= MAXIMUM_RECORDS {
+                    continue;
+                }
+                *count += 1;
             }
             let result = match tag {
                 SeratoTag::Analysis => AnalysisVersion::parse(bytes)

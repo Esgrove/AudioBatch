@@ -27,6 +27,13 @@ pub(super) struct KWeighting {
     channels: usize,
 }
 
+/// Prefix and uninterrupted complete-block energies from one filter pass.
+#[cfg(test)]
+pub(super) struct SplitEnergy {
+    pub prefix: f64,
+    pub total: f64,
+}
+
 /// Feedforward and feedback coefficients of a fixed-order filter.
 #[derive(Debug, Clone, Copy)]
 struct Coefficients<const LENGTH: usize = 5> {
@@ -34,13 +41,6 @@ struct Coefficients<const LENGTH: usize = 5> {
     numerator: [f64; LENGTH],
     /// Feedback coefficients in increasing delay order, with a unit leading coefficient.
     denominator: [f64; LENGTH],
-}
-
-/// Prefix and uninterrupted complete-block energies from one filter pass.
-#[cfg(test)]
-pub(super) struct SplitEnergy {
-    pub prefix: f64,
-    pub total: f64,
 }
 
 impl KWeighting {
@@ -102,24 +102,23 @@ impl KWeighting {
     #[expect(clippy::suboptimal_flops, reason = "separate operations retain reference rounding")]
     pub(super) fn energy_with_frames(&mut self, planes: &[&[f32]], frames: &mut [f64]) -> f64 {
         assert_eq!(planes.len(), self.channels);
-        frames.fill(0.0);
         let mut total = 0.0;
+        let mut first_active = true;
         for ((plane, state), &weight) in planes.iter().zip(&mut self.state).zip(&self.weights) {
             if weight <= 0.0 {
                 continue;
             }
-            let mut sum = 0.0;
-            for (&sample, energy) in plane.iter().zip(frames.iter_mut()) {
-                let filtered_energy = filter_energy(std::slice::from_ref(&sample), &self.coefficients, state, 0.0);
-                *energy += filtered_energy * weight;
-                sum += filtered_energy;
-            }
+            let sum = filter_energy_with_frames(plane, &self.coefficients, state, weight, frames, first_active);
+            first_active = false;
             total += sum * weight;
             for value in state {
                 if value.abs() < f64::MIN_POSITIVE {
                     *value = 0.0;
                 }
             }
+        }
+        if first_active {
+            frames.fill(0.0);
         }
         total
     }
@@ -169,31 +168,62 @@ impl KWeighting {
     }
 }
 
+/// Filters one channel plane while recording weighted per-frame energies with scalar register state.
+#[expect(
+    clippy::suboptimal_flops,
+    reason = "separate multiplication and addition preserve the reference filter rounding"
+)]
+fn filter_energy_with_frames(
+    samples: &[f32],
+    coefficients: &Coefficients,
+    state: &mut [f64; 5],
+    weight: f64,
+    frames: &mut [f64],
+    overwrite_frames: bool,
+) -> f64 {
+    let [n0, n1, n2, n3, n4] = coefficients.numerator;
+    let [_, d1, d2, d3, d4] = coefficients.denominator;
+    let [mut s0, mut s1, mut s2, mut s3, mut s4] = *state;
+    let mut sum = 0.0;
+    for (&sample, energy) in samples.iter().zip(frames.iter_mut()) {
+        s0 = f64::from(sample) - d1 * s1 - d2 * s2 - d3 * s3 - d4 * s4;
+        let filtered = n0 * s0 + n1 * s1 + n2 * s2 + n3 * s3 + n4 * s4;
+        s4 = s3;
+        s3 = s2;
+        s2 = s1;
+        s1 = s0;
+        let filtered_energy = filtered * filtered;
+        if overwrite_frames {
+            *energy = filtered_energy * weight;
+        } else {
+            *energy += filtered_energy * weight;
+        }
+        sum += filtered_energy;
+    }
+    *state = [s0, s1, s2, s3, s4];
+    sum
+}
+
 /// Filters samples into a sequential energy sum without materializing filtered audio.
+#[cfg(test)]
 #[expect(
     clippy::suboptimal_flops,
     reason = "separate multiplication and addition preserve the reference filter rounding"
 )]
 fn filter_energy(samples: &[f32], coefficients: &Coefficients, state: &mut [f64; 5], mut sum: f64) -> f64 {
-    let numerator = &coefficients.numerator;
-    let denominator = &coefficients.denominator;
+    let [n0, n1, n2, n3, n4] = coefficients.numerator;
+    let [_, d1, d2, d3, d4] = coefficients.denominator;
+    let [mut s0, mut s1, mut s2, mut s3, mut s4] = *state;
     for &sample in samples {
-        state[0] = f64::from(sample)
-            - denominator[1] * state[1]
-            - denominator[2] * state[2]
-            - denominator[3] * state[3]
-            - denominator[4] * state[4];
-        let filtered = numerator[0] * state[0]
-            + numerator[1] * state[1]
-            + numerator[2] * state[2]
-            + numerator[3] * state[3]
-            + numerator[4] * state[4];
-        state[4] = state[3];
-        state[3] = state[2];
-        state[2] = state[1];
-        state[1] = state[0];
+        s0 = f64::from(sample) - d1 * s1 - d2 * s2 - d3 * s3 - d4 * s4;
+        let filtered = n0 * s0 + n1 * s1 + n2 * s2 + n3 * s3 + n4 * s4;
+        s4 = s3;
+        s3 = s2;
+        s2 = s1;
+        s1 = s0;
         sum += filtered * filtered;
     }
+    *state = [s0, s1, s2, s3, s4];
     sum
 }
 

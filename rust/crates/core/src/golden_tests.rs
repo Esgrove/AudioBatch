@@ -207,7 +207,7 @@ mod test_golden_files {
 
     /// Returns the golden name of a fixture file, prefixed with its collection.
     fn golden_name(collection: &str, path: &Path) -> String {
-        let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+        let name = path.file_name().map_or_default(|name| name.to_string_lossy());
         format!("{collection}/{name}")
     }
 
@@ -333,7 +333,7 @@ mod test_golden_normalization {
             .windows(4)
             .position(|window| window == b"SSND")
             .map_or(0, |position| position + 16);
-        bytes.get(start..).map(<[u8]>::to_vec).unwrap_or_default()
+        bytes.get(start..).map_or_default(<[u8]>::to_vec)
     }
 
     /// Normalizes a copy of the fixture and records the gain, the output samples, and the output analysis.

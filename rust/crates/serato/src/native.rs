@@ -62,12 +62,18 @@ pub fn decode_tag_base64(text: &[u8]) -> Option<Vec<u8>> {
         if byte.is_ascii_whitespace() || byte == b'\x0b' {
             continue;
         }
-        if !(byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=')) {
-            return None;
-        }
         cleaned.push(byte);
     }
-    if cleaned.is_empty() {
+    decode_cleaned_base64(&cleaned)
+}
+
+/// Decodes already whitespace-stripped base64 bytes with strict alphabet and padding checks.
+fn decode_cleaned_base64(cleaned: &[u8]) -> Option<Vec<u8>> {
+    if cleaned.is_empty()
+        || !cleaned
+            .iter()
+            .all(|&byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+    {
         return None;
     }
     if let Some(padding) = cleaned.iter().position(|&byte| byte == b'=') {
@@ -80,7 +86,7 @@ pub fn decode_tag_base64(text: &[u8]) -> Option<Vec<u8>> {
     if cleaned.len() % 4 == 1 {
         return None;
     }
-    LENIENT_BASE64.decode(&cleaned).ok()
+    LENIENT_BASE64.decode(cleaned).ok()
 }
 
 /// Decodes a native Serato comment value and returns the `GEOB` payload inside it.
@@ -100,7 +106,7 @@ pub fn decode_native_value(value: &str, expected_description: &str) -> Option<Ve
     if text.len() % 4 == 1 && text.last() == Some(&b'A') && !text.contains(&b'=') {
         text.pop();
     }
-    let decoded = decode_tag_base64(&text)?;
+    let decoded = decode_cleaned_base64(&text)?;
     if decoded.len() > MAXIMUM_DECODED_BYTES {
         return None;
     }
@@ -124,6 +130,7 @@ pub fn decode_native_value(value: &str, expected_description: &str) -> Option<Ve
                     .is_some_and(|count| {
                         usize::try_from(u32::from_be_bytes(count))
                             .ok()
+                            .filter(|&count| count <= crate::MAXIMUM_RECORDS)
                             .and_then(|count| count.checked_mul(8))
                             .and_then(|length| length.checked_add(8))
                             == Some(remaining.len())

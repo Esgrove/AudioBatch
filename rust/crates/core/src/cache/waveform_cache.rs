@@ -85,8 +85,9 @@ pub(super) fn store(
     if WaveformOverview::from_bytes(&data).is_none() {
         return Ok(false);
     }
-    Ok(connection.execute(
-        "INSERT INTO rust_waveform_cache (file_path, file_size, modified_time_ms, sample_rate, num_channels,
+    Ok(connection
+        .prepare_cached(
+            "INSERT INTO rust_waveform_cache (file_path, file_size, modified_time_ms, sample_rate, num_channels,
             waveform_version, waveform_data, duration_seconds)
          SELECT ?1, ?2, ?3, ?4, ?5, ?7, ?8, ?9
          WHERE EXISTS (SELECT 1 FROM file_analysis WHERE file_path = ?1 AND file_size = ?2
@@ -97,7 +98,8 @@ pub(super) fn store(
             num_channels = excluded.num_channels,
             waveform_version = excluded.waveform_version, waveform_data = excluded.waveform_data,
             duration_seconds = excluded.duration_seconds",
-        params![
+        )?
+        .execute(params![
             path_key(&record.path),
             i64::try_from(record.file_size).unwrap_or(-1),
             record.modified_time_ms,
@@ -107,19 +109,27 @@ pub(super) fn store(
             SERIALIZATION_VERSION,
             data,
             record.duration_seconds
-        ],
-    )? > 0)
+        ])?
+        > 0)
 }
 
 /// Removes obsolete previews only when the caller's measurement identity won publication.
 pub(super) fn prune_incompatible(connection: &Connection, record: &AnalysisRecord) -> rusqlite::Result<()> {
-    connection.execute(
-        "DELETE FROM rust_waveform_cache WHERE file_path = ?1
+    connection
+        .prepare_cached(
+            "DELETE FROM rust_waveform_cache WHERE file_path = ?1
          AND (file_size != ?2 OR modified_time_ms != ?3 OR sample_rate != ?4 OR num_channels != ?5 OR duration_seconds != ?7)
          AND EXISTS (SELECT 1 FROM file_analysis WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3
             AND sample_rate = ?4 AND channels = ?5 AND length_in_samples = ?6)",
-        params![path_key(&record.path), i64::try_from(record.file_size).unwrap_or(-1), record.modified_time_ms,
-            record.sample_rate, record.channels, i64::try_from(record.length_in_samples).unwrap_or(-1), record.duration_seconds],
-    )?;
+        )?
+        .execute(params![
+            path_key(&record.path),
+            i64::try_from(record.file_size).unwrap_or(-1),
+            record.modified_time_ms,
+            record.sample_rate,
+            record.channels,
+            i64::try_from(record.length_in_samples).unwrap_or(-1),
+            record.duration_seconds
+        ])?;
     Ok(())
 }

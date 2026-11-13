@@ -128,10 +128,12 @@ struct CachedFileVersion {
     modified_time_ms: i64,
 }
 
-/// Required measurement histories serialized before taking the cache write lock.
+/// Required measurement histories and signal-metric blobs serialized before taking the cache write lock.
 struct MeasurementPayloads {
     loudness: Option<Vec<u8>>,
     overloads: Option<Vec<u8>>,
+    dc_offsets: Vec<u8>,
+    clip_counts: Vec<u8>,
 }
 
 /// The custom gain column of a cached row, which is empty when the user has not set a gain for the file.
@@ -278,14 +280,12 @@ impl AnalysisCache {
         if !record.is_ready() && !record.has_error() {
             return Ok(());
         }
-        let observed_identity = self.with_connection(|connection| Ok(stored_identity(connection, &record.path)?))?;
+        let observed_identity =
+            self.with_connection(|connection| Ok(stored_measurement_identity(connection, &record.path)?))?;
         if !record.matches_file_on_disk() {
             return Ok(());
         }
-        let MeasurementPayloads {
-            loudness: history,
-            overloads: overload_history,
-        } = measurement_payloads(record)?;
+        let payloads = measurement_payloads(record)?;
         let file_size = i64::try_from(record.file_size).unwrap_or(i64::MAX);
         self.with_connection(|connection| {
             // Taking the write lock up front keeps a concurrent writer from failing the upgrade from the read.
@@ -293,65 +293,30 @@ impl AnalysisCache {
             if !record.matches_file_on_disk() {
                 return Ok(());
             }
-            let current_identity = stored_identity(&transaction, &record.path)?;
+            let current_identity = stored_measurement_identity(&transaction, &record.path)?;
             if current_identity != observed_identity
-                && current_identity != Some(FileIdentity { file_size: record.file_size, modified_time_ms: record.modified_time_ms })
+                && current_identity
+                    != Some(FileIdentity {
+                        file_size: record.file_size,
+                        modified_time_ms: record.modified_time_ms,
+                    })
             {
                 return Ok(());
             }
-            let custom_gain = record.custom_gain_db.filter(|gain| gain.is_finite());
-            let updated = transaction
-                .execute(
-                    schema::STORE_ANALYSIS_SQL,
-                    params![
-                        path_key(&record.path),
-                        record.file_name,
-                        record.format_name,
-                        file_size,
-                        record.modified_time_ms,
-                        i64::try_from(record.length_in_samples).unwrap_or(i64::MAX),
-                        record.duration_seconds,
-                        f64::from(record.peak_left),
-                        f64::from(record.peak_right),
-                        f64::from(record.overall_peak),
-                        record.true_peak_left,
-                        record.true_peak_right,
-                        record.overall_true_peak,
-                        record.max_short_term_lufs,
-                        record.integrated_lufs,
-                        record.sample_rate,
-                        record.channels,
-                        record.bits_per_sample,
-                        status_code(record.status),
-                        record.error_message,
-                        history,
-                        ANALYSIS_VERSION,
-                        now_ms(),
-                        f64::from(custom_gain.unwrap_or_default()),
-                        custom_gain.is_some(),
-                        overload_history,
-                        producer_name(record.measurement_producer),
-                        record.signal_metrics.plr_db,
-                        record.signal_metrics.psr_db,
-                        record.signal_metrics.crest_factor_db,
-                        record.signal_metrics.dc_offsets.iter().flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>(),
-                        record.signal_metrics.clip_counts.iter().flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>(),
-                        record.signal_metrics.stereo_correlation,
-                    ],
-                )
-                .map_err(CacheError::StoreAnalysis)?;
+            let updated = execute_store_analysis(&transaction, record, file_size, &payloads)?;
             if updated == 0 {
                 transaction.commit()?;
                 return Ok(());
             }
             waveform_cache::prune_incompatible(&transaction, record)?;
-            transaction.execute(
-                "DELETE FROM serato_tag_cache WHERE file_path = ?1
+            transaction
+                .prepare_cached(
+                    "DELETE FROM serato_tag_cache WHERE file_path = ?1
                     AND (file_size != ?2 OR modified_time_ms != ?3)
                     AND EXISTS (SELECT 1 FROM file_analysis WHERE file_path = ?1
                         AND file_size = ?2 AND modified_time_ms = ?3)",
-                params![path_key(&record.path), file_size, record.modified_time_ms],
-            )?;
+                )?
+                .execute(params![path_key(&record.path), file_size, record.modified_time_ms])?;
             if !record.has_error()
                 && let Some(waveform) = record.waveform.as_deref()
             {
@@ -407,18 +372,20 @@ impl AnalysisCache {
         }
         self.with_connection(|connection| {
             Ok(connection
-                .execute(
+                .prepare_cached(
                     "UPDATE file_analysis SET custom_gain_db = ?1, has_custom_gain = ?2, updated_at_ms = ?3
                     WHERE file_path = ?4 AND file_size = ?5 AND modified_time_ms = ?6",
-                    params![
+                )
+                .and_then(|mut statement| {
+                    statement.execute(params![
                         f64::from(custom_gain_db.unwrap_or_default()),
                         custom_gain_db.is_some(),
                         now_ms(),
                         path_key(&record.path),
                         i64::try_from(record.file_size).unwrap_or(-1),
                         record.modified_time_ms
-                    ],
-                )
+                    ])
+                })
                 .map_err(CacheError::StoreCustomGain)?
                 > 0)
         })
@@ -516,7 +483,7 @@ impl AnalysisCache {
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })?;
-        let mut removed = 0;
+        let mut missing = Vec::new();
         for CachedFileVersion {
             path,
             file_size: size,
@@ -533,13 +500,24 @@ impl AnalysisCache {
             let Ok(size) = u64::try_from(size) else {
                 continue;
             };
-            removed += self.with_connection(|connection| {
-                let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                let removed = remove_identity(&transaction, &path, size, modified)?;
-                transaction.commit()?;
-                Ok(removed)
-            })?;
+            missing.push((path, size, modified));
         }
+        let removed = if !missing.is_empty() && !should_stop() {
+            self.with_connection(|connection| {
+                let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let mut total = 0;
+                for (path, size, modified) in missing {
+                    if should_stop() {
+                        break;
+                    }
+                    total += remove_identity(&transaction, &path, size, modified)?;
+                }
+                transaction.commit()?;
+                Ok(total)
+            })?
+        } else {
+            0
+        };
         if removed > 0 {
             tracing::info!("Removed {removed} cached rows for files that no longer exist");
         }
@@ -610,6 +588,26 @@ pub fn data_directory() -> PathBuf {
         .expect("valid AUDIOBATCH_DATA_ROOT")
         .data()
         .to_path_buf()
+}
+
+/// Writes the history with an explicit little-endian header, so the blob reads the same on every platform.
+pub(crate) fn serialize_history(history: &ShortTermLoudnessHistory, record: &AnalysisRecord) -> Option<Vec<u8>> {
+    if !valid_history_timing(history, record, history.values.len())
+        || !history.values.iter().copied().all(valid_history_value)
+    {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(HISTORY_HEADER_BYTES + history.values.len() * 4);
+    bytes.extend_from_slice(&HISTORY_MAGIC.to_le_bytes());
+    bytes.extend_from_slice(&HISTORY_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&history.sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&i64::try_from(history.length_in_samples).ok()?.to_le_bytes());
+    bytes.extend_from_slice(&i32::try_from(history.samples_per_point).ok()?.to_le_bytes());
+    bytes.extend_from_slice(&i32::try_from(history.values.len()).ok()?.to_le_bytes());
+    for value in &history.values {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    Some(bytes)
 }
 
 /// Returns the default database path in the user data directory.
@@ -762,12 +760,13 @@ fn stored_custom_gain(
     modified_time_ms: i64,
 ) -> rusqlite::Result<Option<StoredGain>> {
     connection
-        .query_row(
+        .prepare_cached(
             "SELECT CASE WHEN has_custom_gain = 1 THEN custom_gain_db ELSE NULL END FROM file_analysis
              WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3",
-            params![path_key(path), file_size, modified_time_ms],
-            |row| row.get::<_, Option<f64>>(0),
-        )
+        )?
+        .query_row(params![path_key(path), file_size, modified_time_ms], |row| {
+            row.get::<_, Option<f64>>(0)
+        })
         .optional()
         .map(|stored| {
             stored.map(|gain| StoredGain {
@@ -776,38 +775,59 @@ fn stored_custom_gain(
         })
 }
 
+/// Reads the stored measurement identity from `file_analysis` for optimistic concurrency checks.
+fn stored_measurement_identity(connection: &Connection, path: &Path) -> rusqlite::Result<Option<FileIdentity>> {
+    connection
+        .prepare_cached(
+            "SELECT file_size, modified_time_ms FROM file_analysis
+             WHERE file_path = ?1 AND typeof(file_size) = 'integer' AND file_size >= 0
+               AND typeof(modified_time_ms) = 'integer'",
+        )?
+        .query_row([path_key(path)], |row| {
+            Ok(FileIdentity {
+                file_size: read_nonnegative_integer(row, 0)?,
+                modified_time_ms: row.get(1)?,
+            })
+        })
+        .optional()
+}
+
 /// Reads a stored source identity when a removed file no longer has filesystem metadata.
 fn stored_identity(connection: &Connection, path: &Path) -> rusqlite::Result<Option<FileIdentity>> {
     connection
-        .query_row(
-            "SELECT file_size, modified_time_ms FROM file_analysis WHERE file_path = ?1
-         UNION ALL SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ?1
-         UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1
-         UNION ALL SELECT file_size, modified_time_ms FROM spectrogram_cache WHERE file_path = ?1 LIMIT 1",
-            [path_key(path)],
-            |row| {
-                Ok(FileIdentity {
-                    file_size: read_nonnegative_integer(row, 0)?,
-                    modified_time_ms: row.get(1)?,
-                })
-            },
-        )
+        .prepare_cached(
+            "SELECT file_size, modified_time_ms FROM (
+                SELECT file_size, modified_time_ms FROM file_analysis WHERE file_path = ?1
+                UNION ALL SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ?1
+                UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1
+                UNION ALL SELECT file_size, modified_time_ms FROM spectrogram_cache WHERE file_path = ?1
+            )
+            WHERE typeof(file_size) = 'integer' AND file_size >= 0 AND typeof(modified_time_ms) = 'integer'
+            LIMIT 1",
+        )?
+        .query_row([path_key(path)], |row| {
+            Ok(FileIdentity {
+                file_size: read_nonnegative_integer(row, 0)?,
+                modified_time_ms: row.get(1)?,
+            })
+        })
         .optional()
 }
 
 /// Deletes each artifact with its own identity predicate in the caller's short transaction.
 fn remove_identity(connection: &Connection, path: &Path, size: u64, modified: i64) -> rusqlite::Result<usize> {
+    let key = path_key(path);
+    let size = i64::try_from(size).unwrap_or(-1);
     let mut removed = 0;
-    for table in [
-        "file_analysis",
-        "serato_tag_cache",
-        "rust_waveform_cache",
-        "spectrogram_cache",
+    for query in [
+        "DELETE FROM file_analysis WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3",
+        "DELETE FROM serato_tag_cache WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3",
+        "DELETE FROM rust_waveform_cache WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3",
+        "DELETE FROM spectrogram_cache WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3",
     ] {
-        removed += connection.execute(
-            &format!("DELETE FROM {table} WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3"),
-            params![path_key(path), i64::try_from(size).unwrap_or(-1), modified],
-        )?;
+        removed += connection
+            .prepare_cached(query)?
+            .execute(params![&key, size, modified])?;
     }
     Ok(removed)
 }
@@ -874,12 +894,76 @@ const fn producer_name(producer: MeasurementProducer) -> &'static str {
     }
 }
 
-/// Validates and serializes required histories before taking the measurement write lock.
+/// Executes the cached `STORE_ANALYSIS_SQL` upsert statement inside the caller's write transaction.
+fn execute_store_analysis(
+    connection: &Connection,
+    record: &AnalysisRecord,
+    file_size: i64,
+    payloads: &MeasurementPayloads,
+) -> Result<usize> {
+    let custom_gain = record.custom_gain_db.filter(|gain| gain.is_finite());
+    connection
+        .prepare_cached(schema::STORE_ANALYSIS_SQL)
+        .and_then(|mut statement| {
+            statement.execute(params![
+                path_key(&record.path),
+                record.file_name,
+                record.format_name,
+                file_size,
+                record.modified_time_ms,
+                i64::try_from(record.length_in_samples).unwrap_or(i64::MAX),
+                record.duration_seconds,
+                f64::from(record.peak_left),
+                f64::from(record.peak_right),
+                f64::from(record.overall_peak),
+                record.true_peak_left,
+                record.true_peak_right,
+                record.overall_true_peak,
+                record.max_short_term_lufs,
+                record.integrated_lufs,
+                record.sample_rate,
+                record.channels,
+                record.bits_per_sample,
+                status_code(record.status),
+                record.error_message,
+                payloads.loudness,
+                ANALYSIS_VERSION,
+                now_ms(),
+                f64::from(custom_gain.unwrap_or_default()),
+                custom_gain.is_some(),
+                payloads.overloads,
+                producer_name(record.measurement_producer),
+                record.signal_metrics.plr_db,
+                record.signal_metrics.psr_db,
+                record.signal_metrics.crest_factor_db,
+                payloads.dc_offsets,
+                payloads.clip_counts,
+                record.signal_metrics.stereo_correlation,
+            ])
+        })
+        .map_err(CacheError::StoreAnalysis)
+}
+
+/// Validates and serializes required histories and signal-metric blobs before taking the measurement write lock.
 fn measurement_payloads(record: &AnalysisRecord) -> Result<MeasurementPayloads> {
+    let dc_offsets = record
+        .signal_metrics
+        .dc_offsets
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>();
+    let clip_counts = record
+        .signal_metrics
+        .clip_counts
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>();
     if record.has_error() {
         return Ok(MeasurementPayloads {
             loudness: None,
             overloads: None,
+            dc_offsets,
+            clip_counts,
         });
     }
     let overloads = record
@@ -899,6 +983,8 @@ fn measurement_payloads(record: &AnalysisRecord) -> Result<MeasurementPayloads> 
     Ok(MeasurementPayloads {
         loudness: Some(history),
         overloads: Some(overloads),
+        dc_offsets,
+        clip_counts,
     })
 }
 
@@ -950,26 +1036,6 @@ fn valid_history_timing(history: &ShortTermLoudnessHistory, record: &AnalysisRec
 /// Rejects non-finite readings and values outside the possible loudness range.
 fn valid_history_value(value: f32) -> bool {
     value.is_finite() && f64::from(value) >= crate::record::NEGATIVE_INFINITY_LOUDNESS && value <= MAXIMUM_LOUDNESS
-}
-
-/// Writes the history with an explicit little-endian header, so the blob reads the same on every platform.
-pub(crate) fn serialize_history(history: &ShortTermLoudnessHistory, record: &AnalysisRecord) -> Option<Vec<u8>> {
-    if !valid_history_timing(history, record, history.values.len())
-        || !history.values.iter().copied().all(valid_history_value)
-    {
-        return None;
-    }
-    let mut bytes = Vec::with_capacity(HISTORY_HEADER_BYTES + history.values.len() * 4);
-    bytes.extend_from_slice(&HISTORY_MAGIC.to_le_bytes());
-    bytes.extend_from_slice(&HISTORY_VERSION.to_le_bytes());
-    bytes.extend_from_slice(&history.sample_rate.to_le_bytes());
-    bytes.extend_from_slice(&i64::try_from(history.length_in_samples).ok()?.to_le_bytes());
-    bytes.extend_from_slice(&i32::try_from(history.samples_per_point).ok()?.to_le_bytes());
-    bytes.extend_from_slice(&i32::try_from(history.values.len()).ok()?.to_le_bytes());
-    for value in &history.values {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    Some(bytes)
 }
 
 /// Restores a history blob after validating it against its record.

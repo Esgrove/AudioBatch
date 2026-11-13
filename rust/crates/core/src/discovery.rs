@@ -4,15 +4,21 @@
 //! and the result is de-duplicated and sorted in natural order by full path.
 
 use std::collections::HashSet;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt as _;
 use std::path::{Component, Path, PathBuf};
 
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 use crate::sorting::compare_natural;
 
 /// File extensions the decoder handles, in lowercase.
 pub(crate) const SUPPORTED_EXTENSIONS: [&str; 10] =
     ["aac", "aif", "aifc", "aiff", "bwf", "flac", "m4a", "mp3", "wav", "wave"];
+
+/// Windows `FILE_ATTRIBUTE_HIDDEN` bitmask.
+#[cfg(windows)]
+const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 
 /// Returns true when the path has a supported audio file extension, without touching the file system.
 #[must_use]
@@ -26,65 +32,10 @@ pub fn has_supported_extension(path: &Path) -> bool {
         })
 }
 
-/// Returns true when the path is an existing file with a supported audio extension.
+/// Returns true when the final path component starts with a dot or carries the Windows hidden attribute.
 #[must_use]
-pub(crate) fn is_supported_audio_file(path: &Path) -> bool {
-    path.is_file() && has_supported_extension(path)
-}
-
-/// Expands the input paths into a de-duplicated, naturally sorted list of supported files.
-///
-/// The directory walk checks `is_cancelled` between entries and returns the files found so far when it is set,
-/// so a scan of a large or slow folder can be abandoned quickly.
-pub(crate) fn collect_input_files(
-    input_paths: &[PathBuf],
-    recursive: bool,
-    is_cancelled: &dyn Fn() -> bool,
-) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let mut seen = HashSet::new();
-    let mut add_file = |path: &Path| {
-        // Dot-prefixed files are skipped on every platform.
-        // This includes AppleDouble "._" files,
-        // which hold macOS metadata on non-Apple file systems and are never audio.
-        if is_hidden(path) || !is_supported_audio_file(path) {
-            return;
-        }
-        let absolute = normalize_path(path);
-        if seen.insert(absolute.clone()) {
-            files.push(absolute);
-        }
-    };
-
-    for input_path in input_paths {
-        if is_cancelled() {
-            break;
-        }
-        if input_path.is_dir() {
-            // Links are followed, and walkdir reports a loop as an error entry instead of walking it again.
-            let walker = WalkDir::new(input_path)
-                .follow_links(true)
-                .min_depth(1)
-                .max_depth(if recursive { usize::MAX } else { 1 })
-                .into_iter()
-                .filter_entry(|entry| !is_hidden(entry.path()));
-            for entry in walker {
-                if is_cancelled() {
-                    break;
-                }
-                if let Ok(entry) = entry
-                    && entry.file_type().is_file()
-                {
-                    add_file(entry.path());
-                }
-            }
-        } else {
-            add_file(input_path);
-        }
-    }
-
-    files.sort_by(|first, second| compare_natural(&first.to_string_lossy(), &second.to_string_lossy()));
-    files
+pub fn is_hidden_path(path: &Path) -> bool {
+    is_hidden(path)
 }
 
 /// Returns the absolute form of a path with `.` and `..` components resolved lexically.
@@ -106,11 +57,84 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
-/// Returns true when the final path component starts with a dot.
+/// Returns true when the path is an existing file with a supported audio extension.
+#[must_use]
+pub(crate) fn is_supported_audio_file(path: &Path) -> bool {
+    path.is_file() && has_supported_extension(path)
+}
+
+/// Expands the input paths into a de-duplicated, naturally sorted list of supported files.
+///
+/// The directory walk checks `is_cancelled` between entries and returns the files found so far when it is set,
+/// so a scan of a large or slow folder can be abandoned quickly.
+pub(crate) fn collect_input_files(
+    input_paths: &[PathBuf],
+    recursive: bool,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut seen = HashSet::new();
+    let mut insert_file = |path: &Path| {
+        let absolute = normalize_path(path);
+        if seen.insert(absolute.clone()) {
+            files.push(absolute);
+        }
+    };
+
+    for input_path in input_paths {
+        if is_cancelled() {
+            break;
+        }
+        if input_path.is_dir() {
+            // Links are followed, and walkdir reports a loop as an error entry instead of walking it again.
+            let walker = WalkDir::new(input_path)
+                .follow_links(true)
+                .min_depth(1)
+                .max_depth(if recursive { usize::MAX } else { 1 })
+                .into_iter()
+                .filter_entry(|entry| !is_hidden_entry(entry));
+            for entry in walker {
+                if is_cancelled() {
+                    break;
+                }
+                if let Ok(entry) = entry
+                    && entry.file_type().is_file()
+                    && has_supported_extension(entry.path())
+                {
+                    insert_file(entry.path());
+                }
+            }
+        } else if !is_hidden(input_path) && is_supported_audio_file(input_path) {
+            insert_file(input_path);
+        }
+    }
+
+    files.sort_by(|first, second| compare_natural(&first.to_string_lossy(), &second.to_string_lossy()));
+    files
+}
+
+/// Returns true when the final path component starts with a dot or carries the Windows hidden attribute.
 fn is_hidden(path: &Path) -> bool {
     path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with('.'))
+        .is_some_and(|name| name.as_encoded_bytes().starts_with(b"."))
+        || is_windows_hidden(path.metadata().ok().as_ref())
+}
+
+/// Returns true when a directory entry is dot-prefixed or marked hidden by Windows metadata.
+fn is_hidden_entry(entry: &DirEntry) -> bool {
+    entry.file_name().as_encoded_bytes().starts_with(b".") || is_windows_hidden(entry.metadata().ok().as_ref())
+}
+
+/// Checks Windows `FILE_ATTRIBUTE_HIDDEN`, returning false on other platforms.
+#[cfg(windows)]
+fn is_windows_hidden(metadata: Option<&std::fs::Metadata>) -> bool {
+    metadata.is_some_and(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
+}
+
+/// Non-Windows platforms identify hidden entries strictly by dot-prefixed names.
+#[cfg(not(windows))]
+const fn is_windows_hidden(_metadata: Option<&std::fs::Metadata>) -> bool {
+    false
 }
 
 #[cfg(test)]

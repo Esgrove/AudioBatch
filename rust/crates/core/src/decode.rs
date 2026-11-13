@@ -152,7 +152,7 @@ pub struct DecodeFailureTracker {
 pub struct AudioFileDecoder {
     log_span: tracing::Span,
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn AudioDecoder>,
+    decoder: Option<Box<dyn AudioDecoder>>,
     #[cfg(target_os = "macos")]
     native_aac: Option<native_aac::NativeAacDecoder>,
     track_id: u32,
@@ -335,44 +335,52 @@ impl AudioFileDecoder {
         }
 
         let bits_per_sample = source_bits_per_sample(&parameters);
-
-        let decoder = symphonia::default::get_codecs()
-            .make_audio_decoder(&parameters, &AudioDecoderOptions::default())
-            .map_err(DecodeError::Codec)?;
-
         let mp3_without_delay = parameters.codec == CODEC_ID_MP3 && !has_recorded_delay;
-        let mp4_gapless = (format.format_info().short_name == "isomp4")
-            .then(|| gapless::read_mp4_gapless(path, sample_rate))
-            .flatten();
+        let container = format.format_info().short_name;
         let mut leading_frames = 0;
         let mut frame_limit = None;
-        if let Some(mp4_gapless) = mp4_gapless {
-            leading_frames = mp4_gapless.priming;
-            frame_limit = mp4_gapless.frames;
-            expected_frames =
-                frame_limit.or_else(|| expected_frames.map(|frames| frames.saturating_sub(leading_frames)));
-        } else if mp3_without_delay {
-            leading_frames = MP3_DECODER_DELAY_FRAMES;
-            expected_frames = expected_frames.map(|frames| frames.saturating_sub(leading_frames));
-        }
 
         #[cfg(target_os = "macos")]
-        let native_aac =
-            if format.tracks().len() == 1 && native_aac::supports(&parameters, format.format_info().short_name) {
+        let (decoder, native_aac, ignore_packet_trim) =
+            if format.tracks().len() == 1 && native_aac::supports(&parameters, container) {
                 let native = native_aac::NativeAacDecoder::open(native_file, sample_rate, channels)?;
                 expected_frames = Some(native.frames());
-                leading_frames = 0;
                 frame_limit = expected_frames;
-                Some(native)
+                (None, Some(native), false)
             } else {
-                None
+                let decoder = open_symphonia_decoder(
+                    &parameters,
+                    container,
+                    path,
+                    sample_rate,
+                    mp3_without_delay,
+                    &mut leading_frames,
+                    &mut frame_limit,
+                    &mut expected_frames,
+                )?;
+                (Some(decoder), None, mp3_without_delay)
             };
+
+        #[cfg(not(target_os = "macos"))]
+        let (decoder, ignore_packet_trim) = {
+            let decoder = open_symphonia_decoder(
+                &parameters,
+                container,
+                path,
+                sample_rate,
+                mp3_without_delay,
+                &mut leading_frames,
+                &mut frame_limit,
+                &mut expected_frames,
+            )?;
+            (Some(decoder), mp3_without_delay)
+        };
 
         let info = StreamInfo {
             sample_rate,
             channels,
             bits_per_sample,
-            format_name: format_display_name(format.format_info().short_name, path),
+            format_name: format_display_name(container, path),
             expected_frames,
         };
 
@@ -391,7 +399,7 @@ impl AudioFileDecoder {
             frames_to_skip: leading_frames,
             frame_limit,
             time_base,
-            ignore_packet_trim: mp3_without_delay,
+            ignore_packet_trim,
         };
         decoder.failures = DecodeFailureTracker::new(decoder.stated_frames());
         Ok(decoder)
@@ -485,11 +493,14 @@ impl AudioFileDecoder {
                 continue;
             }
             if self.ignore_packet_trim {
-                packet.dur = Duration::new(packet.dur.get() + packet.trim_end.get());
+                packet.dur = Duration::new(packet.dur.get().saturating_add(packet.trim_end.get()));
                 packet.trim_end = Duration::ZERO;
             }
 
-            match self.decoder.decode(&packet) {
+            let Some(decoder) = self.decoder.as_mut() else {
+                return Ok(None);
+            };
+            match decoder.decode(&packet) {
                 Ok(buffer) => {
                     self.failures.record_success();
                     if buffer.frames() == 0 {
@@ -501,6 +512,7 @@ impl AudioFileDecoder {
                     if frames == 0 {
                         continue;
                     }
+                    validate_finite_pcm(&self.planar)?;
                     self.position += frames;
                     return Ok(Some(&self.planar));
                 }
@@ -552,11 +564,11 @@ impl AudioFileDecoder {
     /// Returns an error when the container cannot seek.
     pub fn seek(&mut self, seconds: f64) -> Result<u64, DecodeError> {
         let _span = self.log_span.clone().entered();
+        if !seconds.is_finite() {
+            return Err(DecodeError::InvalidSeek(seconds));
+        }
         #[cfg(target_os = "macos")]
         if let Some(native) = &mut self.native_aac {
-            if !seconds.is_finite() {
-                return Err(DecodeError::InvalidSeek(seconds));
-            }
             let position = (seconds.max(0.0) * f64::from(self.info.sample_rate)).floor() as u64;
             native.seek(position)?;
             self.position = position.min(native.frames());
@@ -575,7 +587,9 @@ impl AudioFileDecoder {
                 },
             )
             .map_err(DecodeError::Seek)?;
-        self.decoder.reset();
+        if let Some(decoder) = self.decoder.as_mut() {
+            decoder.reset();
+        }
         self.failures = DecodeFailureTracker::new(self.stated_frames());
         let stream_position = self.frames_of(seeked.actual_ts.get());
         self.frames_to_skip = self.leading_frames.saturating_sub(stream_position);
@@ -649,14 +663,6 @@ impl AudioFileDecoder {
     }
 }
 
-/// Returns true when the path has the extension of an MPEG audio file.
-#[must_use]
-pub(crate) fn is_mp3_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp3"))
-}
-
 /// Rejects non-finite source PCM before measurement, normalization, or plugin input.
 ///
 /// # Errors
@@ -670,6 +676,46 @@ pub fn validate_finite_pcm<P: AsRef<[f32]>>(planes: &[P]) -> Result<(), DecodeEr
         return Err(DecodeError::NonFinitePcm);
     }
     Ok(())
+}
+
+/// Returns true when the path has the extension of an MPEG audio file.
+#[must_use]
+pub(crate) fn is_mp3_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp3"))
+}
+
+/// Initializes the Symphonia audio decoder and applies MP4 edit-list or MP3 synthesis-delay trimming.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shared decoder open path updates stream trim and expected length fields"
+)]
+fn open_symphonia_decoder(
+    parameters: &AudioCodecParameters,
+    container: &str,
+    path: &Path,
+    sample_rate: u32,
+    mp3_without_delay: bool,
+    leading_frames: &mut u64,
+    frame_limit: &mut Option<u64>,
+    expected_frames: &mut Option<u64>,
+) -> Result<Box<dyn AudioDecoder>, DecodeError> {
+    let decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(parameters, &AudioDecoderOptions::default())
+        .map_err(DecodeError::Codec)?;
+    if let Some(mp4_gapless) = (container == "isomp4")
+        .then(|| gapless::read_mp4_gapless(path, sample_rate))
+        .flatten()
+    {
+        *leading_frames = mp4_gapless.priming;
+        *frame_limit = mp4_gapless.frames;
+        *expected_frames = frame_limit.or_else(|| expected_frames.map(|frames| frames.saturating_sub(*leading_frames)));
+    } else if mp3_without_delay {
+        *leading_frames = MP3_DECODER_DELAY_FRAMES;
+        *expected_frames = expected_frames.map(|frames| frames.saturating_sub(*leading_frames));
+    }
+    Ok(decoder)
 }
 
 /// Determines the best available source bit depth of a track.

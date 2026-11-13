@@ -57,18 +57,6 @@ pub fn format_clip_counts(metrics: &crate::signal_metrics::SignalMetrics) -> Str
         .join(", ")
 }
 
-/// Formats a contextual error and its causes at a diagnostic reporting boundary.
-/// The contextual error's display text must not already include its source.
-pub(crate) fn format_error_chain(mut error: &dyn Error) -> String {
-    let mut message = error.to_string();
-    while let Some(source) = error.source() {
-        message.push_str(": ");
-        message.push_str(&source.to_string());
-        error = source;
-    }
-    message
-}
-
 /// Converts a linear amplitude to decibels, clamped to the given floor.
 /// Silence returns the floor instead of negative infinity.
 #[must_use]
@@ -101,9 +89,10 @@ pub fn format_loudness_compact(loudness: f64) -> String {
 /// Formats the per-file gain in dB with an explicit sign and without a unit, or an empty string without one.
 #[must_use]
 pub fn format_custom_gain_compact(record: &AnalysisRecord) -> String {
-    record
-        .custom_gain_db
-        .map_or_else(String::new, |decibels| format!("{decibels:+.1}"))
+    record.custom_gain_db.map_or_else(String::new, |decibels| {
+        let rounded = (decibels * 10.0).round() / 10.0 + 0.0;
+        format!("{rounded:+.1}")
+    })
 }
 
 /// Returns the average file bitrate in kbps, or 0 when it cannot be derived.
@@ -313,6 +302,18 @@ pub const fn format_status(status: AnalysisStatus) -> &'static str {
     }
 }
 
+/// Formats a contextual error and its causes at a diagnostic reporting boundary.
+/// The contextual error's display text must not already include its source.
+pub(crate) fn format_error_chain(mut error: &dyn Error) -> String {
+    let mut message = error.to_string();
+    while let Some(source) = error.source() {
+        message.push_str(": ");
+        message.push_str(&source.to_string());
+        error = source;
+    }
+    message
+}
+
 /// Parses numbered Camelot and Open Key notation, allowing one leading zero and whitespace before the suffix.
 fn camelot_number(key: &str) -> Option<String> {
     let suffix = key.chars().next_back()?;
@@ -436,6 +437,10 @@ mod test_level_formatting {
         assert_eq!(format_custom_gain_compact(&record), "+1.5");
         record.custom_gain_db = Some(-3.04);
         assert_eq!(format_custom_gain_compact(&record), "-3.0");
+        record.custom_gain_db = Some(-0.04);
+        assert_eq!(format_custom_gain_compact(&record), "+0.0");
+        record.custom_gain_db = Some(-0.0);
+        assert_eq!(format_custom_gain_compact(&record), "+0.0");
     }
 }
 

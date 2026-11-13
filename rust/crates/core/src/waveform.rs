@@ -15,6 +15,9 @@ const MAXIMUM_BUCKETS: usize = 8192;
 /// Smallest bucket size in frames, used for very short files.
 const MINIMUM_FRAMES_PER_BUCKET: u64 = 64;
 
+/// Largest power-of-two bucket stride representable in the serialized `u32` header field.
+const MAXIMUM_FRAMES_PER_BUCKET: u64 = 1 << 31;
+
 /// Scale between a sample in the range -1 to 1 and its 8-bit quantized value.
 const QUANTIZATION_SCALE: f32 = 127.0;
 
@@ -243,10 +246,18 @@ impl WaveformOverview {
     #[must_use]
     pub fn column_peaks(&self, channel: usize, start_frame: f64, end_frame: f64, columns: usize) -> Vec<(f32, f32)> {
         let mut result = vec![(0.0, 0.0); columns];
-        if columns == 0 || end_frame <= start_frame || channel >= self.channels as usize {
+        if columns == 0
+            || !start_frame.is_finite()
+            || !end_frame.is_finite()
+            || end_frame <= start_frame
+            || channel >= self.channels as usize
+        {
             return result;
         }
         let frames_per_column = (end_frame - start_frame) / columns as f64;
+        if !frames_per_column.is_finite() {
+            return result;
+        }
         let level = self
             .levels
             .iter()
@@ -295,7 +306,11 @@ impl WaveformBuilder {
     pub fn new(channels: usize, expected_frames: Option<u64>) -> Self {
         let channels = channels.max(1);
         let target = expected_frames.unwrap_or(0) / (MAXIMUM_BUCKETS as u64 / 2);
-        let frames_per_bucket = target.max(MINIMUM_FRAMES_PER_BUCKET).next_power_of_two();
+        let frames_per_bucket = if target >= MAXIMUM_FRAMES_PER_BUCKET {
+            MAXIMUM_FRAMES_PER_BUCKET
+        } else {
+            target.max(MINIMUM_FRAMES_PER_BUCKET).next_power_of_two()
+        };
         let expected_buckets = expected_frames
             .unwrap_or(0)
             .div_ceil(frames_per_bucket)
@@ -306,7 +321,7 @@ impl WaveformBuilder {
             frames_in_bucket: 0,
             current_min: vec![0.0; channels],
             current_max: vec![0.0; channels],
-            peaks: Vec::with_capacity(expected_buckets * channels),
+            peaks: Vec::with_capacity(expected_buckets.saturating_mul(channels)),
         }
     }
 
@@ -429,7 +444,7 @@ impl WaveformBuilder {
             self.peaks.push(QuantizedPeak::from_range(minimum, maximum));
         }
         self.frames_in_bucket = 0;
-        if self.peaks.len() / self.channels >= MAXIMUM_BUCKETS {
+        if self.peaks.len() / self.channels >= MAXIMUM_BUCKETS && self.frames_per_bucket < MAXIMUM_FRAMES_PER_BUCKET {
             self.peaks = merge_bucket_pairs(&self.peaks, self.channels);
             self.frames_per_bucket *= 2;
         }
@@ -760,13 +775,29 @@ mod test_waveform {
             overview
                 .column_peaks(1, 0.0, 1000.0, 4)
                 .iter()
-                .all(|&(low, high)| low == 0.0 && high == 0.0)
+                .all(|&(low, high)| low.abs() < f32::EPSILON && high.abs() < f32::EPSILON)
         );
         assert!(
             overview
                 .column_peaks(0, 10.0, 10.0, 4)
                 .iter()
-                .all(|&(low, high)| low == 0.0 && high == 0.0)
+                .all(|&(low, high)| low.abs() < f32::EPSILON && high.abs() < f32::EPSILON)
         );
+        assert!(
+            overview
+                .column_peaks(0, -f64::MAX, f64::MAX, 4)
+                .iter()
+                .all(|&(low, high)| low.abs() < f32::EPSILON && high.abs() < f32::EPSILON)
+        );
+    }
+
+    #[test]
+    fn huge_expected_frames_keep_a_valid_serializable_bucket_stride() {
+        let mut builder = WaveformBuilder::new(2, Some(u64::MAX));
+        builder.push(&[&[0.25; 64], &[-0.25; 64]]);
+        let overview = builder.finish(48_000, 64);
+        assert_eq!(overview.base_level().frames_per_bucket, MAXIMUM_FRAMES_PER_BUCKET);
+        let restored = WaveformOverview::from_bytes(&overview.to_bytes()).expect("serializable stride");
+        assert_eq!(*overview, restored);
     }
 }

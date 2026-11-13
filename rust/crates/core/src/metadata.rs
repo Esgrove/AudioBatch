@@ -41,29 +41,45 @@ const MULTI_VALUE_SEPARATOR: char = '\0';
 /// Description of the `USLT` frame `TagLib` writes for the lyrics of a non-`ID3v2` source.
 const LYRICS_DESCRIPTION: &str = "LYRICS";
 
-/// A failure to write copied metadata onto an output file.
+/// A failure to read or write copied metadata onto an output file.
 #[derive(Debug, thiserror::Error)]
-#[error("Failed to write metadata to {}", destination.display())]
-pub struct MetadataError {
-    /// Output file whose metadata could not be written.
-    pub destination: PathBuf,
-    /// Tag writer's concrete encoding or I/O failure.
-    #[source]
-    pub source: lofty::error::FileEncodingError,
+pub enum MetadataError {
+    /// Source file could not be opened to inspect its metadata.
+    #[error("Could not open {} to copy its metadata", source_path.display())]
+    OpenSource {
+        /// Source file whose metadata could not be read.
+        source_path: PathBuf,
+        /// Filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Copied metadata could not be written onto the output file.
+    #[error("Failed to write metadata to {}", destination.display())]
+    Write {
+        /// Output file whose metadata could not be written.
+        destination: PathBuf,
+        /// Tag writer's concrete encoding or I/O failure.
+        #[source]
+        source: lofty::error::FileEncodingError,
+    },
 }
 
 /// Copies the tags, embedded pictures, and Serato data of the source onto the destination,
 /// leaving out the Serato overview.
 ///
-/// A source without readable metadata is not an error, because some inputs have none that lofty can read.
+/// A readable source without metadata is not an error, because some inputs have none that lofty can read.
 ///
 /// # Errors
 ///
-/// Returns an error only when metadata was read but could not be written,
-/// so the caller can keep the original and its tags.
+/// Returns an error when the source file cannot be opened or when copied metadata cannot be written,
+/// so the caller keeps the original and its tags.
 pub fn copy_metadata(source: &Path, destination: &Path) -> Result<(), MetadataError> {
     let _span = tracing::info_span!("copy_metadata", source = %source.display(), destination = %destination.display())
         .entered();
+    File::open(source).map_err(|error| MetadataError::OpenSource {
+        source_path: source.to_path_buf(),
+        source: error,
+    })?;
     let Some(mut tag) = read_source_tag(source) else {
         return Ok(());
     };
@@ -73,7 +89,7 @@ pub fn copy_metadata(source: &Path, destination: &Path) -> Result<(), MetadataEr
     }
     keep_urls_single_byte(&mut tag);
     tag.save_to_path(destination, WriteOptions::default())
-        .map_err(|source| MetadataError {
+        .map_err(|source| MetadataError::Write {
             destination: destination.to_path_buf(),
             source,
         })
@@ -185,7 +201,9 @@ fn read_vorbis_comments(path: &Path) -> Option<VorbisComments> {
             let flac = FlacFile::read_from(&mut file, options).ok()?;
             let mut comments = flac.vorbis_comments().cloned().unwrap_or_default();
             for (picture, information) in flac.pictures() {
-                comments.insert_picture(picture.clone(), Some(*information)).ok()?;
+                if let Err(error) = comments.insert_picture(picture.clone(), Some(*information)) {
+                    tracing::warn!(path = %path.display(), %error, "Skipping unreadable FLAC picture");
+                }
             }
             Some(comments)
         }
@@ -466,5 +484,16 @@ mod test_copy_metadata {
         copy_metadata(&test_fixtures::fixture("sine_stereo_48000_24.flac"), &destination).expect("copies");
 
         assert!(read_aiff_tag(&destination).is_none_or(|tag| tag.is_empty()));
+    }
+
+    #[test]
+    fn missing_source_fails_instead_of_writing_untagged_output() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let missing = directory.path().join("missing.flac");
+        let destination = directory.path().join("out.aif");
+        write_destination(&destination);
+
+        let error = copy_metadata(&missing, &destination).expect_err("missing source fails");
+        assert!(matches!(error, MetadataError::OpenSource { .. }));
     }
 }
