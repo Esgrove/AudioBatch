@@ -329,6 +329,7 @@ ImageControlEditor::~ImageControlEditor()
     }
     bypassAttachment.reset();
     deltaAttachment.reset();
+    monoAttachment.reset();
     outputAttachment.reset();
     setLookAndFeel(nullptr);
 }
@@ -962,13 +963,20 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
     for (auto* disclosure : {&spectrogramDisclosure, &correlationDisclosure, &bandControlsDisclosure}) {
         disclosure->advance(step);
     }
+    const auto mode = renderMode();
     spectrogramRenderer.submitFrame(
         step,
         analysisSettings.persistenceSeconds,
         spectrogram.getPlotBounds() + spectrogram.getPosition().toFloat(),
-        renderMode()
+        mode
     );
-    openGLContext.triggerRepaint();
+    const bool modeChanged = lastSubmittedRenderMode != mode;
+    lastSubmittedRenderMode = mode;
+    const bool animatingSpectrogram = isShowing() && !spectrogramRenderer.isUnavailable()
+        && (mode == SpectrogramRenderMode::particles || mode == SpectrogramRenderMode::solid);
+    if (animatingSpectrogram || modeChanged || renderBenchmark != nullptr) {
+        openGLContext.triggerRepaint();
+    }
 
     const Crossovers crossovers = imageControlProcessor.getCrossovers();
     if (!sameCrossovers(crossovers, displayedCrossovers)) {

@@ -49,5 +49,7 @@ private:
     bool showing {false};
     /// Whether a mouse button went down since the pointer last moved, which hides tooltips until it moves again.
     bool suppressed {false};
+    /// Whether lastPointer has recorded an initial screen position.
+    bool pointerInitialized {false};
 };
 }  // namespace esgrove::image_control

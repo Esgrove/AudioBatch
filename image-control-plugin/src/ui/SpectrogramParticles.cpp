@@ -26,12 +26,12 @@ constexpr float CONTRAST_EXPONENT_RANGE {3.0F};
 /// How far the pivot of the contrast curve moves up from the middle of the display range at full contrast,
 /// so more of the quieter range darkens and only the strongest content stays bright.
 constexpr float CONTRAST_PIVOT_SHIFT {0.2F};
-/// Extra contrast at and above HIGH_CONTRAST_FULL_FREQUENCY, where dense, noisy bins would otherwise blur together.
+/// Extra contrast four octaves above HIGH_CONTRAST_START_FREQUENCY (16 kHz), where dense highs would blur together.
 constexpr float HIGH_CONTRAST_BOOST {0.25F};
 /// Frequency from which the extra contrast of the highs rises, in Hz.
 constexpr float HIGH_CONTRAST_START_FREQUENCY {1000.0F};
-/// Frequency where the extra contrast of the highs is complete, in Hz.
-constexpr float HIGH_CONTRAST_FULL_FREQUENCY {16'000.0F};
+/// Inverse octave span of the high-frequency contrast ramp (four octaves from 1 kHz to 16 kHz).
+constexpr float HIGH_CONTRAST_INV_OCTAVES {0.25F};
 /// Tilt added to the displayed level per octave above the pivot, in dB.
 /// Music falls by about this much per octave, so the tilt shows the bass, the mids,
 /// and the highs about equally bright instead of leaving the highs faint.
@@ -80,6 +80,28 @@ constexpr double MEL_SCALE {2595.0};
 constexpr double MEL_CORNER_FREQUENCY {700.0};
 /// Base of the logarithm in the HTK mel definition.
 constexpr double MEL_LOGARITHM_BASE {10.0};
+/// Ratio between the upper and lower frequency bounds on the logarithmic axis.
+constexpr double LOG_FREQUENCY_RATIO {static_cast<double>(MAX_FREQUENCY) / static_cast<double>(MIN_FREQUENCY)};
+/// Cached natural logarithm of LOG_FREQUENCY_RATIO, initialized once at first axis query.
+double logFrequencySpan()
+{
+    static const double span = std::log(LOG_FREQUENCY_RATIO);
+    return span;
+}
+
+/// Cached HTK mel value of MIN_FREQUENCY.
+double minimumMel()
+{
+    static const double lowest = frequencyToMel(static_cast<double>(MIN_FREQUENCY));
+    return lowest;
+}
+
+/// Cached HTK mel span between MIN_FREQUENCY and MAX_FREQUENCY.
+double melSpan()
+{
+    static const double span = frequencyToMel(static_cast<double>(MAX_FREQUENCY)) - minimumMel();
+    return span;
+}
 
 /// A colour of the frequency palette at a frequency, as sRGB channels from 0 to 1.
 struct FrequencyColourStop {
@@ -152,13 +174,10 @@ double frequencyToShare(const double frequency, const FrequencyScale scale)
 {
     switch (scale) {
         case FrequencyScale::logarithmic: {
-            const double ratio = static_cast<double>(MAX_FREQUENCY) / static_cast<double>(MIN_FREQUENCY);
-            return std::log(frequency / static_cast<double>(MIN_FREQUENCY)) / std::log(ratio);
+            return std::log(frequency / static_cast<double>(MIN_FREQUENCY)) / logFrequencySpan();
         }
         case FrequencyScale::mel: {
-            const double lowest = frequencyToMel(static_cast<double>(MIN_FREQUENCY));
-            const double highest = frequencyToMel(static_cast<double>(MAX_FREQUENCY));
-            return (frequencyToMel(frequency) - lowest) / (highest - lowest);
+            return (frequencyToMel(frequency) - minimumMel()) / melSpan();
         }
     }
     return 0.0;
@@ -169,13 +188,10 @@ double shareToFrequency(const double share, const FrequencyScale scale)
 {
     switch (scale) {
         case FrequencyScale::logarithmic: {
-            const double ratio = static_cast<double>(MAX_FREQUENCY) / static_cast<double>(MIN_FREQUENCY);
-            return static_cast<double>(MIN_FREQUENCY) * std::pow(ratio, share);
+            return static_cast<double>(MIN_FREQUENCY) * std::pow(LOG_FREQUENCY_RATIO, share);
         }
         case FrequencyScale::mel: {
-            const double lowest = frequencyToMel(static_cast<double>(MIN_FREQUENCY));
-            const double highest = frequencyToMel(static_cast<double>(MAX_FREQUENCY));
-            return melToFrequency(lowest + share * (highest - lowest));
+            return melToFrequency(minimumMel() + share * melSpan());
         }
     }
     return 0.0;
@@ -255,8 +271,8 @@ float contrastCurve(const float share, const float contrast)
 /// This makes the strongest content clearer in dense, noisy highs.
 float frequencyContrast(const float frequency, const float contrast)
 {
-    const float ramp = std::log2(std::max(frequency, MIN_FREQUENCY) / HIGH_CONTRAST_START_FREQUENCY)
-        / std::log2(HIGH_CONTRAST_FULL_FREQUENCY / HIGH_CONTRAST_START_FREQUENCY);
+    const float ramp
+        = std::log2(std::max(frequency, MIN_FREQUENCY) / HIGH_CONTRAST_START_FREQUENCY) * HIGH_CONTRAST_INV_OCTAVES;
     return contrast + HIGH_CONTRAST_BOOST * std::clamp(ramp, 0.0F, 1.0F);
 }
 

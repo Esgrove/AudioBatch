@@ -317,6 +317,14 @@ SettingsPanel::~SettingsPanel()
 {
     juce::Desktop::getInstance().removeFocusChangeListener(this);
     state.removeListener(this);
+    colourChoice.onChange = nullptr;
+    frequencyChoice.onChange = nullptr;
+    renderingChoice.onChange = nullptr;
+    panMidpointSlider.onValueChange = nullptr;
+    panEdgeSlider.onValueChange = nullptr;
+    for (auto* slider : {&persistenceSlider, &contrastSlider, &panMidpointSlider, &panEdgeSlider}) {
+        slider->valueFromTextFunction = nullptr;
+    }
 }
 
 /// Measures the laid-out footer plus the bottom inset, so the preferred height always matches the real controls.

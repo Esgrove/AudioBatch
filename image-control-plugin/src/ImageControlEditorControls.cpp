@@ -190,10 +190,26 @@ void ImageControlEditor::configureHeaderIcons()
 void ImageControlEditor::updateHistoryButtons()
 {
     const auto& history = imageControlProcessor.getHistory();
-    undoButton.setEnabled(history.canUndo() && !history.isEditing());
-    redoButton.setEnabled(history.canRedo() && !history.isEditing());
-    undoButton.setTooltip(history.canUndo() ? "Undo " + history.undoDescription() : "No processing edit to undo");
-    redoButton.setTooltip(history.canRedo() ? "Redo " + history.redoDescription() : "No processing edit to redo");
+    const bool canUndo = history.canUndo() && !history.isEditing();
+    const bool canRedo = history.canRedo() && !history.isEditing();
+    if (undoButton.isEnabled() != canUndo) {
+        undoButton.setEnabled(canUndo);
+    }
+    if (redoButton.isEnabled() != canRedo) {
+        redoButton.setEnabled(canRedo);
+    }
+    const juce::String undoTooltip
+        = history.canUndo() ? "Undo " + history.undoDescription() : "No processing edit to undo";
+    if (shownUndoTooltip != undoTooltip) {
+        shownUndoTooltip = undoTooltip;
+        undoButton.setTooltip(undoTooltip);
+    }
+    const juce::String redoTooltip
+        = history.canRedo() ? "Redo " + history.redoDescription() : "No processing edit to redo";
+    if (shownRedoTooltip != redoTooltip) {
+        shownRedoTooltip = redoTooltip;
+        redoButton.setTooltip(redoTooltip);
+    }
 }
 
 /// Installs or removes pre-control routing only while the editor-owned component hierarchy is alive.

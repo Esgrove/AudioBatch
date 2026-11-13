@@ -419,15 +419,23 @@ private:
 
     /// Native peer outlives the context attachment, and context outlives renderer resource cleanup.
     juce::Component component;
+    /// Owning OpenGL context attached to the helper component.
     juce::OpenGLContext context;
+    /// Production renderer under measurement.
     SpectrogramRenderer renderer;
-    /// Caller-owned immutable workload and options outlive the host and every queued job.
+    /// Caller-owned immutable options outlive the host and every queued job.
     const Options& options;
+    /// Caller-owned immutable workload outlives the host and every queued job.
     const Workload& workload;
+    /// Completed CPU/GPU timing observations written by the GL thread.
     Results results;
+    /// Captured exception thrown on the GL thread, rethrown on the message thread.
     std::exception_ptr failure;
+    /// Creation timestamp bounding context attachment wait time.
     std::chrono::steady_clock::time_point created {std::chrono::steady_clock::now()};
+    /// Set with release semantics once the GL thread finishes warmup and measurement.
     std::atomic<bool> finished {false};
+    /// Whether the GL batch execution callback has already been queued.
     bool queued {false};
 };
 

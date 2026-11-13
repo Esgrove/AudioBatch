@@ -238,7 +238,7 @@ private:
     /// Whether an editor requests correlation measurements. Never serialized.
     std::atomic<bool> correlationEnabled {false};
     /// Last metered callback time. Zero means no reading has been published for this view generation.
-    std::atomic<std::uint32_t> correlationUpdateMilliseconds {0};
+    std::atomic<std::uint64_t> correlationUpdateMilliseconds {0};
     /// Monitor generation rejects a callback finishing after its requesting view was hidden or closed.
     std::atomic<std::uint32_t> correlationGeneration {1};
     /// Generation of the most recently published processor meter readings.
@@ -246,7 +246,7 @@ private:
     /// Last view generation applied to the imager, accessed only by the processing thread.
     std::uint32_t activeCorrelationGeneration {0};
     /// Expiry is computed from the prepared host block size before callbacks can publish readings.
-    std::atomic<std::uint32_t> correlationExpiryMilliseconds {0};
+    std::atomic<std::uint64_t> correlationExpiryMilliseconds {0};
     /// Message-thread-only guard suppressing snapshot, analyzer-tap, and dirty updates during tree restores.
     bool restoringState {false};
 };

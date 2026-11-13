@@ -210,6 +210,12 @@ private:
     std::optional<bool> shownHidden;
     /// Whether the plot geometry was last maximized, empty until the initial layout settings are applied.
     std::optional<bool> shownMaximized;
+    /// Render mode last submitted to the OpenGL thread, so transitions repaint once before idling.
+    std::optional<SpectrogramRenderMode> lastSubmittedRenderMode;
+    /// Last Undo tooltip set on the header button, avoiding per-VBlank accessibility mutations.
+    juce::String shownUndoTooltip;
+    /// Last Redo tooltip set on the header button, avoiding per-VBlank accessibility mutations.
+    juce::String shownRedoTooltip;
 
     /// Whether the saved layout has been restored, so layout changes are saved from now on.
     /// Until then, sizes JUCE applies while the editor is built, such as the minimum size, are not saved.

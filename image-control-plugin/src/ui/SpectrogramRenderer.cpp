@@ -235,6 +235,7 @@ bool createTarget(SpectrogramRenderTarget& target, const int width, const int he
     const bool complete
         = juce::gl::glCheckFramebufferStatus(juce::gl::GL_FRAMEBUFFER) == juce::gl::GL_FRAMEBUFFER_COMPLETE;
     if (!complete) {
+        releaseTarget(target);
         return false;
     }
     juce::gl::glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
@@ -449,15 +450,23 @@ void SpectrogramRenderer::renderOpenGL()
 bool SpectrogramRenderer::renderFrame(const float scale, const std::optional<juce::Rectangle<int>> physicalPlot)
 {
     SpectrogramPendingWork work;
+    juce::Rectangle<int> plot;
+    bool canRender = false;
     {
         const std::scoped_lock lock(pendingMutex);
-        drawing.clear();
-        std::swap(drawing, pending.particles);
         work.fadeSeconds = std::exchange(pending.fadeSeconds, 0.0);
         work.persistenceSeconds = pending.persistenceSeconds;
-        work.clear = std::exchange(pending.clear, false);
         work.plotInEditor = pending.plotInEditor;
         work.mode = pending.mode;
+        plot = physicalPlot.value_or((work.plotInEditor * scale).getSmallestIntegerContainer());
+        canRender = ready && work.mode != SpectrogramRenderMode::hidden && !plot.isEmpty();
+        drawing.clear();
+        if (canRender) {
+            std::swap(drawing, pending.particles);
+            work.clear = std::exchange(pending.clear, false);
+        } else {
+            pending.particles.clear();
+        }
     }
 
     const auto background = juce::Colour(palette::GREY_SEMI_DARK);
@@ -466,8 +475,7 @@ bool SpectrogramRenderer::renderFrame(const float scale, const std::optional<juc
     juce::gl::glClearColor(background.getFloatRed(), background.getFloatGreen(), background.getFloatBlue(), 1.0F);
     juce::gl::glClear(juce::gl::GL_COLOR_BUFFER_BIT);
 
-    const auto plot = physicalPlot.value_or((work.plotInEditor * scale).getSmallestIntegerContainer());
-    if (!ready || work.mode == SpectrogramRenderMode::hidden || plot.isEmpty()) {
+    if (!canRender) {
         return false;
     }
     const ScopedSpectrogramBindings bindings;

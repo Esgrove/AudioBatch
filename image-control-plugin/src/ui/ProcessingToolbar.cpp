@@ -267,7 +267,15 @@ PresetRequest ProcessingToolbarContent::makeRequest(const PresetOperation operat
 /// Rejects a completion after host restore, slot change, or replacement of the persistent baseline or file binding.
 bool ProcessingToolbarContent::requestIsCurrent(const PresetRequest& request) const
 {
-    const auto presentation = processor.getPresetPresentation();
+    return requestMatchesPresentation(request, processor.getPresetPresentation());
+}
+
+/// Checks a captured request against an already fetched active-slot presentation snapshot.
+bool ProcessingToolbarContent::requestMatchesPresentation(
+    const PresetRequest& request,
+    const PresetPresentation& presentation
+)
+{
     if (request.generation != presentation.generation || request.comparisonSlot != presentation.comparisonSlot) {
         return false;
     }
@@ -333,7 +341,7 @@ void ProcessingToolbarContent::refresh()
 {
     observePendingLoad();
     std::optional<PresetCompletion> completion;
-    {
+    if (busy) {
         const std::scoped_lock lock(mailbox->mutex);
         completion = std::move(mailbox->completion);
         mailbox->completion.reset();
@@ -358,31 +366,53 @@ void ProcessingToolbarContent::refresh()
             pendingLoadSound.reset();
         }
     }
-    if (nameEditContext && !requestIsCurrent(*nameEditContext)) {
+    const auto presentation = processor.getPresetPresentation();
+    if (nameEditContext && !requestMatchesPresentation(*nameEditContext, presentation)) {
         cancelNameEdit();
     }
     const auto& history = processor.getHistory();
-    const bool slotA = processor.getActiveComparisonSlot() == 0;
-    slotAButton.setToggleState(slotA, juce::dontSendNotification);
-    slotBButton.setToggleState(!slotA, juce::dontSendNotification);
-    slotAButton.setEnabled(!history.isEditing());
-    slotBButton.setEnabled(!history.isEditing());
-    copyButton.setEnabled(!history.isEditing());
-    copyButton.setButtonText(juce::String::fromUTF8(slotA ? "A \xe2\x86\x92 B" : "B \xe2\x86\x92 A"));
-    copyButton.setTitle(slotA ? "Copy A to B" : "Copy B to A");
-    copyButton.setTooltip(
-        slotA ? "Replace only slot B's sound with A. Preset identities and baselines are unchanged"
-              : "Replace only slot A's sound with B. Preset identities and baselines are unchanged"
-    );
-    presetSelector.setEnabled(canInteract());
-    presetMenuButton.setEnabled(canInteract());
-    updatePresetSelector();
+    const bool editing = history.isEditing();
+    const bool slotA = presentation.comparisonSlot == 0;
+    if (shownSlotA != slotA) {
+        shownSlotA = slotA;
+        slotAButton.setToggleState(slotA, juce::dontSendNotification);
+        slotBButton.setToggleState(!slotA, juce::dontSendNotification);
+        copyButton.setButtonText(juce::String::fromUTF8(slotA ? "A \xe2\x86\x92 B" : "B \xe2\x86\x92 A"));
+        copyButton.setTitle(slotA ? "Copy A to B" : "Copy B to A");
+        copyButton.setTooltip(
+            slotA ? "Replace only slot B's sound with A. Preset identities and baselines are unchanged"
+                  : "Replace only slot A's sound with B. Preset identities and baselines are unchanged"
+        );
+    }
+    const bool slotEnabled = !editing;
+    if (slotAButton.isEnabled() != slotEnabled) {
+        slotAButton.setEnabled(slotEnabled);
+    }
+    if (slotBButton.isEnabled() != slotEnabled) {
+        slotBButton.setEnabled(slotEnabled);
+    }
+    if (copyButton.isEnabled() != slotEnabled) {
+        copyButton.setEnabled(slotEnabled);
+    }
+    const bool interactive = canInteract();
+    if (presetSelector.isEnabled() != interactive) {
+        presetSelector.setEnabled(interactive);
+    }
+    if (presetMenuButton.isEnabled() != interactive) {
+        presetMenuButton.setEnabled(interactive);
+    }
+    updatePresetSelector(presentation);
+}
+
+/// Captures the active-slot presentation and updates the preset selector.
+void ProcessingToolbarContent::updatePresetSelector()
+{
+    updatePresetSelector(processor.getPresetPresentation());
 }
 
 /// Presents persistent name and dirty state without silently adopting any revision from the latest library scan.
-void ProcessingToolbarContent::updatePresetSelector()
+void ProcessingToolbarContent::updatePresetSelector(const PresetPresentation& presentation)
 {
-    const auto presentation = processor.getPresetPresentation();
     const auto& provenance = presentation.provenance;
     const bool modified = presentation.modified || (nameEditContext && draftName != nameEditContext->provenanceName);
     auto name = provenance ? provenance->name : juce::String("Unsaved");
@@ -401,23 +431,40 @@ void ProcessingToolbarContent::updatePresetSelector()
     } else if (modified) {
         soundDescription = "The active sound differs from the stored baseline for " + name.quoted();
     }
-    presetSelector.setTitle("User preset: " + name);
-    presetSelector.setDescription(soundDescription);
-    const auto feedback = libraryFeedback();
-    presetSelector.setNameFeedback(feedback);
-    presetSelector.setTooltip(
-        name + juce::newLine + soundDescription + juce::newLine + feedback + juce::newLine
-        + "Click the name to edit. Use the arrow to load a preset."
-    );
-    presetMenuButton.setTooltip("Save and manage presets" + juce::newLine + feedback);
-    presetSelector.setDescription(soundDescription + juce::newLine + feedback);
-    presetSelector.setColour(
-        juce::ComboBox::outlineColourId, juce::Colour(nameError.isEmpty() ? palette::GREY_MEDIUM : palette::YELLOW)
-    );
+    const auto title = "User preset: " + name;
+    if (shownSelectorTitle != title) {
+        shownSelectorTitle = title;
+        presetSelector.setTitle(title);
+    }
+    const auto feedback = libraryFeedback(presentation);
+    const auto selectorTooltip = name + juce::newLine + soundDescription + juce::newLine + feedback + juce::newLine
+        + "Click the name to edit. Use the arrow to load a preset.";
+    if (shownSelectorTooltip != selectorTooltip) {
+        shownSelectorTooltip = selectorTooltip;
+        presetSelector.setNameFeedback(feedback);
+        presetSelector.setTooltip(selectorTooltip);
+    }
+    const auto menuTooltip = "Save and manage presets" + juce::newLine + feedback;
+    if (shownMenuTooltip != menuTooltip) {
+        shownMenuTooltip = menuTooltip;
+        presetMenuButton.setTooltip(menuTooltip);
+    }
+    const auto fullDescription = soundDescription + juce::newLine + feedback;
+    if (shownSelectorDescription != fullDescription) {
+        shownSelectorDescription = fullDescription;
+        presetSelector.setDescription(fullDescription);
+    }
+    const bool hasError = nameError.isNotEmpty();
+    if (shownSelectorError != hasError) {
+        shownSelectorError = hasError;
+        presetSelector.setColour(
+            juce::ComboBox::outlineColourId, juce::Colour(hasError ? palette::YELLOW : palette::GREY_MEDIUM)
+        );
+    }
 }
 
 /// Keeps operation progress, naming feedback, and library diagnostics separate from the modified marker.
-juce::String ProcessingToolbarContent::libraryFeedback() const
+juce::String ProcessingToolbarContent::libraryFeedback(const PresetPresentation& presentation) const
 {
     if (nameError.isNotEmpty()) {
         return nameError;
@@ -435,7 +482,6 @@ juce::String ProcessingToolbarContent::libraryFeedback() const
         return juce::String(static_cast<int>(issues.size()))
             + " invalid: Some preset files were rejected. Choose Presets > Preset file errors for details.";
     }
-    const auto presentation = processor.getPresetPresentation();
     const auto& selection = presentation.selection;
     if (presentation.provenance && !selection) {
         return "Unlinked: Choose Reconnect to link the saved preset, or Save As to create a new preset.";

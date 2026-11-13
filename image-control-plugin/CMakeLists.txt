@@ -319,6 +319,17 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         PRIVATE juce::juce_audio_processors juce::juce_audio_utils fmt::fmt
         PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
     )
+    if(IMAGE_CONTROL_HARDENING)
+        if(APPLE)
+            target_compile_definitions(
+                ImageControlParity
+                PRIVATE
+                    _LIBCPP_HARDENING_MODE=$<IF:$<CONFIG:Debug>,_LIBCPP_HARDENING_MODE_EXTENSIVE,_LIBCPP_HARDENING_MODE_FAST>
+            )
+        elseif(MSVC)
+            target_compile_definitions(ImageControlParity PRIVATE _MSVC_STL_HARDENING=1)
+        endif()
+    endif()
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParity.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParityScenarios.cpp" TARGET_DIRECTORY ImageControlParity
@@ -658,8 +669,19 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         PRIVATE juce::juce_audio_processors juce::juce_audio_utils fmt::fmt
         PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
     )
+    if(IMAGE_CONTROL_HARDENING)
+        if(APPLE)
+            target_compile_definitions(
+                ImageControlPresetWriter
+                PRIVATE
+                    _LIBCPP_HARDENING_MODE=$<IF:$<CONFIG:Debug>,_LIBCPP_HARDENING_MODE_EXTENSIVE,_LIBCPP_HARDENING_MODE_FAST>
+            )
+        elseif(MSVC)
+            target_compile_definitions(ImageControlPresetWriter PRIVATE _MSVC_STL_HARDENING=1)
+        endif()
+    endif()
     set_source_files_properties(
-        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/PresetWriter.cpp" TARGET_DIRECTORY ImageControlPresetWriter
-        PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/PresetWriter.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.cpp"
+        TARGET_DIRECTORY ImageControlPresetWriter PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
 endif()

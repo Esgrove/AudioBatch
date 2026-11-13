@@ -70,9 +70,13 @@ public:
 #endif
     {
 #if !JUCE_WINDOWS
-        // flock is tied to the open description, so separate AU/VST3 images in one host exclude each other too.
-        const auto lockFile = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                                  .getChildFile("esgrove.ImageControl.UserPresets-v1.lock");
+        // flock is tied to the open description, so separate AU/VST3 images and AUHostingService share this lock.
+        auto lockDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                                 .getChildFile("Library/Caches/com.esgrove.imagecontrol");
+        if (!lockDirectory.isDirectory() && lockDirectory.createDirectory().failed()) {
+            lockDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory);
+        }
+        const auto lockFile = lockDirectory.getChildFile("UserPresets-v1.lock");
         descriptor = ::open(
             lockFile.getFullPathName().toRawUTF8(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, LOCK_FILE_PERMISSIONS
         );
@@ -317,6 +321,28 @@ juce::Result checkCollision(
                 return juce::Result::fail("A preset with this name already exists.");
             }
         }
+    }
+    return juce::Result::ok();
+}
+
+/// Checks whether an export destination folder already contains a file
+/// or directory with the same case-insensitive filename,
+/// allowing symlinked parent folders and unrelated sibling files with the same stem.
+juce::Result checkExportFilenameCollision(const juce::File& parentDirectory, const juce::String& fileName)
+{
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(nativePath(parentDirectory), error);
+    const std::filesystem::directory_iterator end;
+    while (!error && iterator != end) {
+        if (juceFile(iterator->path()).getFileName().equalsIgnoreCase(fileName)) {
+            return juce::Result::fail("The destination already exists. Choose a new file.");
+        }
+        iterator.increment(error);
+    }
+    if (error) {
+        return juce::Result::fail(
+            juce::String("Cannot read the export destination directory: ") + juce::String(error.message())
+        );
     }
     return juce::Result::ok();
 }
@@ -679,7 +705,13 @@ juce::Result UserPresets::exportPreset(const UserPreset& selection, const juce::
     if (!current) {
         return juce::Result::fail(current.error());
     }
-    if (destination.getParentDirectory() == directory || destination == juce::File()) {
+    std::error_code sameFolderError;
+    const bool insideLibrary = directory.exists()
+        && std::filesystem::equivalent(
+                                   nativePath(destination.getParentDirectory()), nativePath(directory), sameFolderError
+        )
+        && !sameFolderError;
+    if (insideLibrary || destination.getParentDirectory() == directory || destination == juce::File()) {
         return juce::Result::fail("Export outside the preset library to a new file.");
     }
     if (const auto result = validateName(destination.getFileName()); result.failed()) {
@@ -688,8 +720,7 @@ juce::Result UserPresets::exportPreset(const UserPreset& selection, const juce::
     if (!destination.getParentDirectory().isDirectory()) {
         return juce::Result::fail("The export destination directory does not exist.");
     }
-    if (const auto result
-        = checkCollision(destination.getParentDirectory(), destination.getFileNameWithoutExtension(), {}, parameters);
+    if (const auto result = checkExportFilenameCollision(destination.getParentDirectory(), destination.getFileName());
         result.failed())
     {
         return result;
