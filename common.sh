@@ -288,15 +288,117 @@ install_shell_completions() {
     done
 }
 
-# Sign a completed local macOS app after every executable, icon, license, and resource has been copied.
+# Placeholder Apple Developer account configuration for macOS Developer ID signing and notarization.
+# Local builds remain ad-hoc (-) by default until CODESIGN_IDENTITY or --sign/--notarize is requested.
+APPLE_TEAM_ID="${APPLE_TEAM_ID:-TEAMID0000}"
+APPLE_ID="${APPLE_ID:-developer@example.com}"
+APPLE_NOTARY_PROFILE="${APPLE_NOTARY_PROFILE:-audiobatch-notary}"
+APPLE_DEVELOPER_ORG="${APPLE_DEVELOPER_ORG:-Esgrove}"
+export APPLE_TEAM_ID APPLE_ID APPLE_NOTARY_PROFILE APPLE_DEVELOPER_ORG
+
+# Select --timestamp=none for local ad-hoc signing and --timestamp for Developer ID signing.
+mac_codesign_timestamp_arg() {
+    local identity="${1:--}"
+    if [ "$identity" = "-" ]; then
+        echo "--timestamp=none"
+    else
+        echo "--timestamp"
+    fi
+}
+
+# Return 0 when the given codesign identity is a real certificate rather than ad-hoc (-).
+mac_is_developer_id_identity() {
+    local identity="${1:-}"
+    [ -n "$identity" ] && [ "$identity" != "-" ]
+}
+
+# Print the Developer ID Application identity configured via CODESIGN_IDENTITY or derived from APPLE_TEAM_ID.
+default_mac_developer_app_identity() {
+    if mac_is_developer_id_identity "${CODESIGN_IDENTITY:-}"; then
+        echo "$CODESIGN_IDENTITY"
+    else
+        echo "Developer ID Application: $APPLE_DEVELOPER_ORG ($APPLE_TEAM_ID)"
+    fi
+}
+
+# Print the Developer ID Installer identity configured via INSTALLER_SIGN_IDENTITY or derived from APPLE_TEAM_ID.
+default_mac_installer_identity() {
+    if [ -n "${INSTALLER_SIGN_IDENTITY:-}" ]; then
+        echo "$INSTALLER_SIGN_IDENTITY"
+    else
+        echo "Developer ID Installer: $APPLE_DEVELOPER_ORG ($APPLE_TEAM_ID)"
+    fi
+}
+
+# Print setup instructions for the separate Apple Developer account placeholders and exit with status 1.
+print_mac_signing_setup_and_exit() {
+    local reason="$1"
+    print_error "$reason"
+    cat >&2 << EOF
+
+Configure your Apple Developer credentials in the environment before running with --sign or --notarize:
+  export APPLE_TEAM_ID="YOURTEAMID"
+  export CODESIGN_IDENTITY="Developer ID Application: $APPLE_DEVELOPER_ORG (\$APPLE_TEAM_ID)"
+  export INSTALLER_SIGN_IDENTITY="Developer ID Installer: $APPLE_DEVELOPER_ORG (\$APPLE_TEAM_ID)"
+
+For notarization, store an app-specific password once in your login keychain:
+  xcrun notarytool store-credentials "$APPLE_NOTARY_PROFILE" \\
+      --apple-id "your-apple-id@example.com" \\
+      --team-id "\$APPLE_TEAM_ID" \\
+      --password "<app-specific-password>"
+  export APPLE_NOTARY_PROFILE="$APPLE_NOTARY_PROFILE"
+
+Or provide credentials directly via APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_SPECIFIC_PASSWORD.
+Inspect installed signing identities with: security find-identity -v
+EOF
+    exit 1
+}
+
+# Validate that Developer ID signing certificates are configured and present in the keychain.
+# Pass "true" as the first argument when an Installer certificate (.pkg) is also required.
+require_mac_developer_signing() {
+    local need_installer="${1:-false}"
+    if [ "$BASH_PLATFORM" != mac ]; then
+        print_error_and_exit "macOS code signing and notarization are only supported on macOS."
+    fi
+    require_command codesign
+    require_command security
+
+    local app_identity
+    app_identity=$(default_mac_developer_app_identity)
+    if [[ "$app_identity" == *"TEAMID0000"* ]] || ! mac_is_developer_id_identity "$app_identity"; then
+        print_mac_signing_setup_and_exit "CODESIGN_IDENTITY is still using placeholder '$app_identity'."
+    fi
+
+    local available_identities
+    available_identities=$(security find-identity -v 2> /dev/null || true)
+    if ! grep -Fq "$app_identity" <<< "$available_identities"; then
+        print_mac_signing_setup_and_exit "Signing certificate not found in keychain: $app_identity"
+    fi
+    export CODESIGN_IDENTITY="$app_identity"
+
+    if [ "$need_installer" = true ]; then
+        local installer_identity
+        installer_identity=$(default_mac_installer_identity)
+        if [[ "$installer_identity" == *"TEAMID0000"* ]]; then
+            print_mac_signing_setup_and_exit "INSTALLER_SIGN_IDENTITY is still using placeholder '$installer_identity'."
+        fi
+        if ! grep -Fq "$installer_identity" <<< "$available_identities"; then
+            print_mac_signing_setup_and_exit "Installer signing certificate not found in keychain: $installer_identity"
+        fi
+        export INSTALLER_SIGN_IDENTITY="$installer_identity"
+    fi
+}
+
+# Sign a completed macOS .app bundle after every executable, icon, license, and resource has been copied.
 # An explicit identity must succeed. An unset or empty identity selects ad-hoc signing, never keychain discovery.
-# Hardened runtime is a signing option. Only library validation is relaxed to host third-party plugins.
+# Hardened Runtime is enabled with plugin-hosting entitlements so third-party VST3/AU/CLAP plugins can load in-process.
 sign_mac_app_bundle() {
     local bundle="$1"
-    local root
-    root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return
-    local entitlements="$root/assets/macos.entitlements"
+    local entitlements="$REPO_ROOT/assets/macos.entitlements"
     local identity="${CODESIGN_IDENTITY:--}"
+    local timestamp_arg
+    timestamp_arg=$(mac_codesign_timestamp_arg "$identity")
 
     if [ "$BASH_PLATFORM" != mac ]; then
         print_error "macOS app signing is only supported on macOS."
@@ -305,9 +407,146 @@ sign_mac_app_bundle() {
     plutil -lint -s "$entitlements" || return
     plutil -lint -s "$bundle/Contents/Info.plist" || return
     print_magenta "Signing $(basename "$bundle") with identity: $identity"
-    codesign --force --sign "$identity" --options runtime --timestamp=none \
+    codesign --force --sign "$identity" --options runtime "$timestamp_arg" \
         --entitlements "$entitlements" "$bundle" || return
     codesign --verify --deep --strict --verbose=2 "$bundle" || return
+}
+
+# Sign a standalone macOS CLI Mach-O executable with Hardened Runtime and plugin-hosting entitlements.
+# Arguments: <binary-path> <bundle-identifier>
+sign_mac_cli_binary() {
+    local binary="$1"
+    local identifier="$2"
+    local entitlements="$REPO_ROOT/assets/macos.entitlements"
+    local identity="${CODESIGN_IDENTITY:--}"
+    local timestamp_arg
+    timestamp_arg=$(mac_codesign_timestamp_arg "$identity")
+
+    if [ "$BASH_PLATFORM" != mac ]; then
+        print_error "macOS CLI signing is only supported on macOS."
+        return 1
+    fi
+    if [ ! -f "$binary" ]; then
+        print_error "CLI binary not found for signing: $binary"
+        return 1
+    fi
+    if [ -z "$identifier" ]; then
+        print_error "A Mach-O identifier is required when signing $binary."
+        return 1
+    fi
+    plutil -lint -s "$entitlements" || return
+    print_magenta "Signing $(basename "$binary") ($identifier) with identity: $identity"
+    codesign --force --sign "$identity" --identifier "$identifier" --options runtime "$timestamp_arg" \
+        --entitlements "$entitlements" "$binary" || return
+    codesign --verify --strict --verbose=2 "$binary" || return
+}
+
+# Sign a loadable macOS plugin bundle (.vst3 or .component) with Hardened Runtime and no entitlements.
+# Loadable MH_BUNDLE binaries inherit process entitlements from their host DAW and must not carry host entitlements.
+sign_mac_plugin_bundle() {
+    local bundle="$1"
+    local identity="${CODESIGN_IDENTITY:--}"
+    local timestamp_arg
+    timestamp_arg=$(mac_codesign_timestamp_arg "$identity")
+
+    if [ "$BASH_PLATFORM" != mac ]; then
+        print_error "macOS plugin signing is only supported on macOS."
+        return 1
+    fi
+    if [ ! -d "$bundle" ]; then
+        print_error "Plugin bundle not found for signing: $bundle"
+        return 1
+    fi
+    plutil -lint -s "$bundle/Contents/Info.plist" || return
+    print_magenta "Signing $(basename "$bundle") with identity: $identity"
+    codesign --force --sign "$identity" --options runtime "$timestamp_arg" "$bundle" || return
+    codesign --verify --deep --strict --verbose=2 "$bundle" || return
+}
+
+# Submit a signed macOS .pkg, bundle (.app/.vst3/.component), or CLI binary to Apple's notary service and wait.
+# Pass --staple as the second argument to staple the notarization ticket to bundles and .pkg installers.
+notarize_mac_artifact() {
+    local artifact="$1"
+    local staple_flag="${2:-}"
+    if [ "$BASH_PLATFORM" != mac ]; then
+        print_error "macOS notarization is only supported on macOS."
+        return 1
+    fi
+    if [ ! -e "$artifact" ]; then
+        print_error "Artifact to notarize does not exist: $artifact"
+        return 1
+    fi
+    require_command xcrun
+
+    local auth_args=()
+    if [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]; then
+        if [ "$APPLE_ID" = "developer@example.com" ] || [ "$APPLE_TEAM_ID" = "TEAMID0000" ]; then
+            print_mac_signing_setup_and_exit "APPLE_ID or APPLE_TEAM_ID is still set to its placeholder value."
+        fi
+        auth_args=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD")
+    else
+        if [ "$APPLE_TEAM_ID" = "TEAMID0000" ] && [ "$APPLE_NOTARY_PROFILE" = "audiobatch-notary" ]; then
+            print_mac_signing_setup_and_exit "Notarization credentials are still set to placeholder defaults."
+        fi
+        auth_args=(--keychain-profile "$APPLE_NOTARY_PROFILE")
+    fi
+
+    case "$artifact" in
+        *.pkg)
+            if ! pkgutil --check-signature "$artifact" > /dev/null 2>&1; then
+                print_mac_signing_setup_and_exit "Cannot notarize unsigned installer package: $artifact"
+            fi
+            ;;
+        *)
+            local signature_details
+            signature_details=$(codesign -dv "$artifact" 2>&1 || true)
+            if grep -Fq "Signature=adhoc" <<< "$signature_details" || ! grep -Fq "Authority=Developer ID" <<< "$signature_details"; then
+                print_mac_signing_setup_and_exit "Artifact must be signed with a Developer ID certificate before notarization: $artifact"
+            fi
+            ;;
+    esac
+
+    local submit_path="$artifact"
+    local temp_dir=""
+    case "$artifact" in
+        *.pkg | *.dmg | *.zip) ;;
+        *)
+            temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/audiobatch-notary.XXXXXXXX")
+            submit_path="$temp_dir/$(basename "$artifact").zip"
+            /usr/bin/ditto -c -k --keepParent "$artifact" "$submit_path"
+            ;;
+    esac
+
+    print_magenta "Submitting $(basename "$artifact") to Apple notary service..."
+    local status=0
+    xcrun notarytool submit "$submit_path" "${auth_args[@]}" --wait || status=$?
+    if [ -n "$temp_dir" ]; then
+        rm -rf "$temp_dir"
+    fi
+    if [ "$status" -ne 0 ]; then
+        print_error "Notarization failed for $artifact"
+        return "$status"
+    fi
+
+    if [ "$staple_flag" = "--staple" ]; then
+        case "$artifact" in
+            *.pkg | *.dmg | *.app | *.vst3 | *.component)
+                print_magenta "Stapling notarization ticket to $(basename "$artifact")..."
+                xcrun stapler staple "$artifact" || return
+                xcrun stapler validate "$artifact" || return
+                ;;
+        esac
+    fi
+
+    case "$artifact" in
+        *.pkg)
+            spctl --assess -vv --type install "$artifact" || return
+            ;;
+        *.app)
+            spctl --assess -vv --type execute "$artifact" || return
+            ;;
+    esac
+    print_green "Notarized: $artifact"
 }
 
 # Enable calling functions directly as arguments:
