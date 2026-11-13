@@ -119,9 +119,13 @@ parse_arguments() {
 
 build_dist_binaries() {
     require_command cargo "Cargo not found in path. Maybe install rustup?"
-    print_magenta "Building Rust AudioBatchRs dist profile ($TARGET_CPU, aarch64-apple-darwin, macOS 15.0)..."
+    if [ "$TARGET_CPU" != apple-m1 ]; then
+        print_error_and_exit "Distribution builds require --target-cpu apple-m1. Local build.sh remains native."
+    fi
+    print_magenta "Building Rust AudioBatchRs dist profile (apple-m1, aarch64-apple-darwin, macOS 15.0)..."
+    # Encoded flags take precedence over all inherited Cargo CPU and feature overrides.
     MACOSX_DEPLOYMENT_TARGET=15.0 \
-        CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="-C target-cpu=$TARGET_CPU" \
+        CARGO_ENCODED_RUSTFLAGS=$'-C\x1ftarget-cpu=apple-m1' \
         cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --locked --profile dist --target aarch64-apple-darwin \
         -p audiobatch-cli -p audiobatch-gui --bins
 }
