@@ -34,6 +34,10 @@ OPTIONS: All options are optional
         Delete the release CMake build directory and its compilation cache before rebuilding.
         Cannot be used with --reuse.
 
+    -z | --notarize
+        Sign with Developer ID, submit to Apple's notary service, and staple the GUI app (macOS only).
+        Requires APPLE_TEAM_ID / CODESIGN_IDENTITY and notarization credentials in the environment.
+
     -v | --verbose
         Display commands being executed.
 "
@@ -43,6 +47,7 @@ parse_arguments() {
     INSTALL_APP=true
     REUSE_BUILD_DIR=false
     CLEAN_BUILD_DIR=false
+    NOTARIZE=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -63,6 +68,9 @@ parse_arguments() {
             -c | --clean)
                 CLEAN_BUILD_DIR=true
                 ;;
+            -z | --notarize)
+                NOTARIZE=true
+                ;;
             -v | --verbose)
                 set -x
                 ;;
@@ -76,6 +84,9 @@ parse_arguments() {
 
     if [ "$CLEAN_BUILD_DIR" = true ] && [ "$REUSE_BUILD_DIR" = true ]; then
         print_error_and_exit "--clean and --reuse cannot be used together."
+    fi
+    if [ "$NOTARIZE" = true ] && [ "$BASH_PLATFORM" != "mac" ]; then
+        print_error_and_exit "--notarize is only supported on macOS."
     fi
 
     CLI_BINARY_NAME="audiobatch"
@@ -142,6 +153,13 @@ install_cli() {
     if [ ! -d "$INSTALL_DIR" ]; then
         print_yellow "Creating $INSTALL_DIR..."
         mkdir -p "$INSTALL_DIR"
+    fi
+
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        sign_mac_cli_binary "$cli_source" "$CLI_BUNDLE_ID"
+        if [ "$NOTARIZE" = true ]; then
+            notarize_mac_artifact "$cli_source"
+        fi
     fi
 
     mv -f "$cli_source" "$INSTALL_DIR/$CLI_BINARY_NAME"
@@ -213,6 +231,10 @@ install_gui_app() {
     print_magenta "Installing GUI app..."
     echo "Source: $app_source"
 
+    if [ "$NOTARIZE" = true ]; then
+        notarize_mac_artifact "$app_source" --staple
+    fi
+
     if [ -d "/Applications/$GUI_APP_BUNDLE" ]; then
         print_yellow "Removing existing /Applications/$GUI_APP_BUNDLE..."
         rm -rf "/Applications/$GUI_APP_BUNDLE"
@@ -257,6 +279,9 @@ install_project() {
     parse_arguments "$@"
     if [ "$BASH_PLATFORM" != mac ] && [ "$BASH_PLATFORM" != windows ]; then
         print_error_and_exit "Platform is not supported yet"
+    fi
+    if [ "$NOTARIZE" = true ]; then
+        require_mac_developer_signing false
     fi
     cd "$REPO"
     build_release_artifacts

@@ -97,6 +97,9 @@ build_app() {
         fi
         print_green "${executable%.exe}"
         mv ./target/"$BUILD_PROFILE"/"$executable" "$executable"
+        if [ "$BASH_PLATFORM" = "mac" ] && [ "${executable%.exe}" = "$CLI_BINARY_NAME" ]; then
+            sign_mac_cli_binary "$REPO/$executable" "$CLI_BUNDLE_ID"
+        fi
         ./"$executable" --version
         # The help of the GUI only prints the usage line.
         if [ "${executable%.exe}" = "$CLI_BINARY_NAME" ]; then

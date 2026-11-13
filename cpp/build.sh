@@ -264,6 +264,7 @@ build_mac_app() {
 
     require_path "$CLI_APP_SOURCE"
     cp -f "$CLI_APP_SOURCE" "$CLI_APP_DESTINATION"
+    sign_mac_cli_binary "$CLI_APP_DESTINATION" "$CLI_BUNDLE_ID"
 
     if [ "$CLI_ONLY" != true ]; then
         require_path "$GUI_APP_SOURCE"

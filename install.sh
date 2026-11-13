@@ -27,11 +27,17 @@ OPTIONS: All options are optional
     -l | --cli-only
         Install only the CLIs, followed by both ImageControl plugins unless a project is named.
 
+    -a | --app-only
+        Install only the GUI apps, followed by both ImageControl plugins unless a project is named.
+
     -c | --clean
         Clean the selected C++ build directory before rebuilding.
 
     -r | --reuse
         Reuse the existing C++ build directory. Rust accepts this compatibility option without changing its build.
+
+    -z | --notarize
+        Sign with Developer ID and notarize the macOS applications and C++ ImageControl bundles (macOS only).
 
     -v | --verbose
         Display commands being executed.
@@ -39,6 +45,15 @@ OPTIONS: All options are optional
 
 parse_arguments() {
     parse_project_arguments install.sh true "$@"
+    PLUGIN_INSTALL_ARGUMENTS=()
+    local argument
+    for argument in "${PROJECT_ARGUMENTS[@]}"; do
+        case "$argument" in
+            -z | --notarize | -v | --verbose)
+                PLUGIN_INSTALL_ARGUMENTS+=("$argument")
+                ;;
+        esac
+    done
 }
 
 # Dispatch application options separately from the plugin's independent installer interface.
@@ -48,8 +63,8 @@ install_projects() {
     if [ "$PROJECT_SCOPE" = cpp ] || [ "$PROJECT_SCOPE" = rust ]; then
         return
     fi
-    print_magenta "Running image-control-plugin/install.sh"
-    "$REPO_ROOT/image-control-plugin/install.sh"
+    print_magenta "Running image-control-plugin/install.sh ${PLUGIN_INSTALL_ARGUMENTS[*]}"
+    "$REPO_ROOT/image-control-plugin/install.sh" "${PLUGIN_INSTALL_ARGUMENTS[@]}"
     print_magenta "Running image-control-plugin/rust/install.sh"
     "$REPO_ROOT/image-control-plugin/rust/install.sh"
 }

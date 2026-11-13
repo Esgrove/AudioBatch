@@ -7,3 +7,12 @@ export REPO
 
 # shellcheck source=common.sh
 source "$REPO/../common.sh"
+
+GUI_BUNDLE_ID="com.esgrove.audiobatch"
+CLI_BUNDLE_ID="com.esgrove.audiobatch.cli"
+export GUI_BUNDLE_ID CLI_BUNDLE_ID
+
+# Print the project version from cpp/CMakeLists.txt.
+get_cpp_version() {
+    awk '/^project\(/,/\)/ { if ($1 == "VERSION") { print $2; exit } }' "$REPO/CMakeLists.txt"
+}
