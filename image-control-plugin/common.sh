@@ -88,3 +88,8 @@ plugin_validate_vst3() {
 plugin_run_tests() {
     ctest --test-dir "$1" --build-config "$2" --output-on-failure --no-tests=error --timeout 180
 }
+
+# Print the plugin version from image-control-plugin/CMakeLists.txt.
+get_plugin_version() {
+    awk '/^project\(/,/\)/ { if ($1 == "VERSION") { print $2; exit } }' "$REPO/CMakeLists.txt"
+}

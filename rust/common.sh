@@ -34,7 +34,8 @@ GUI_BINARY_NAME="AudioBatchRs"
 # The macOS app bundle of the GUI, whose bundle id keeps it apart from the C++ AudioBatch.app.
 GUI_APP_BUNDLE="$GUI_BINARY_NAME.app"
 GUI_BUNDLE_ID="com.esgrove.audiobatch-rs"
-export CLI_BINARY_NAME GUI_BINARY_NAME GUI_APP_BUNDLE GUI_BUNDLE_ID
+CLI_BUNDLE_ID="com.esgrove.audiobatch-rs.cli"
+export CLI_BINARY_NAME GUI_BINARY_NAME GUI_APP_BUNDLE GUI_BUNDLE_ID CLI_BUNDLE_ID
 
 # Copy third-party notices into a distribution's license directory, including for CLI-only builds.
 copy_third_party_licenses() {

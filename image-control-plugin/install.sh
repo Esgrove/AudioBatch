@@ -45,12 +45,17 @@ OPTIONS: All options are optional
         Set pluginval strictness and enable validation. Default is 5.
         This level does not change auval's strict validation.
 
+    -z | --notarize
+        Sign with Developer ID, submit to Apple's notary service, and staple both plugin bundles (macOS only).
+        Requires APPLE_TEAM_ID / CODESIGN_IDENTITY and notarization credentials in the environment.
+
     -v | --verbose
         Display commands being executed."
 
 parse_arguments() {
     VALIDATE=false
     VALIDATION_LEVEL=5
+    NOTARIZE=false
     # Passed on to build.sh, which validates the combinations.
     BUILD_OPTIONS=()
 
@@ -82,6 +87,9 @@ parse_arguments() {
                 VALIDATE=true
                 shift
                 ;;
+            -z | --notarize)
+                NOTARIZE=true
+                ;;
             -v | --verbose)
                 set -x
                 BUILD_OPTIONS+=(--verbose)
@@ -94,6 +102,9 @@ parse_arguments() {
         shift
     done
     plugin_check_validation_level "$VALIDATION_LEVEL"
+    if [ "$NOTARIZE" = true ] && [ "$BASH_PLATFORM" != "mac" ]; then
+        print_error_and_exit "--notarize is only supported on macOS."
+    fi
 }
 
 # Copy and verify beside the destination, then publish by rename with a recoverable previous installation.
@@ -236,6 +247,7 @@ $ps_body"
 }
 
 install_vst3() {
+    local verify_signature=false
     if [ "$BASH_PLATFORM" = "windows" ]; then
         # The system-wide VST3 folder, which needs an elevated shell to write to.
         VST3_DIR="$(cygpath -u "$COMMONPROGRAMFILES")/VST3"
@@ -244,9 +256,10 @@ install_vst3() {
     else
         VST3_DIR="$HOME/Library/Audio/Plug-Ins/VST3"
         INSTALL_SOURCE="$BUNDLE"
+        verify_signature=true
     fi
     local status
-    if install_replacement "$INSTALL_SOURCE" "$VST3_DIR/ImageControl.vst3"; then
+    if install_replacement "$INSTALL_SOURCE" "$VST3_DIR/ImageControl.vst3" "$verify_signature"; then
         :
     else
         status=$?
@@ -289,6 +302,9 @@ install_plugin() {
     if [ "$BASH_PLATFORM" != "mac" ] && [ "$BASH_PLATFORM" != "windows" ]; then
         print_error_and_exit "Platform is not supported yet"
     fi
+    if [ "$NOTARIZE" = true ]; then
+        require_mac_developer_signing false
+    fi
 
     print_magenta "Running build.sh ${BUILD_OPTIONS[*]}"
     "$DIR/build.sh" "${BUILD_OPTIONS[@]}"
@@ -297,6 +313,11 @@ install_plugin() {
     # The Audio Unit is built next to the VST3 in the same artefacts folder.
     BUNDLE=$("$DIR/build.sh" --print "${BUILD_OPTIONS[@]}")
     AU_BUNDLE="$(dirname "$(dirname "$BUNDLE")")/AU/ImageControl.component"
+
+    if [ "$NOTARIZE" = true ]; then
+        notarize_mac_artifact "$BUNDLE" --staple
+        notarize_mac_artifact "$AU_BUNDLE" --staple
+    fi
 
     install_vst3
     if [ "$BASH_PLATFORM" = "mac" ]; then

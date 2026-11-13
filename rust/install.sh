@@ -19,6 +19,9 @@ OPTIONS: All options are optional
     -l | --cli-only
         Install only the CLI binary, which skips the slower GUI build.
 
+    -a | --app-only
+        Install only the GUI app, skipping the CLI and shell completions.
+
     -c | --clean
         Accepted for the root scripts. Only the C++ CMake build directory is cleaned.
 
@@ -26,12 +29,18 @@ OPTIONS: All options are optional
         Accepted for compatibility with the C++ installer, without changing Rust installation.
         Rust still builds and installs through Cargo's incremental build cache.
 
+    -z | --notarize
+        Sign with Developer ID, submit to Apple's notary service, and staple the GUI app (macOS only).
+        Requires APPLE_TEAM_ID / CODESIGN_IDENTITY and notarization credentials in the environment.
+
     -v | --verbose
         Display commands being executed.
 "
 
 parse_arguments() {
-    CLI_ONLY=false
+    INSTALL_CLI=true
+    INSTALL_APP=true
+    NOTARIZE=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -39,10 +48,18 @@ parse_arguments() {
                 print_usage_and_exit 0
                 ;;
             -l | --cli-only)
-                CLI_ONLY=true
+                INSTALL_CLI=true
+                INSTALL_APP=false
+                ;;
+            -a | --app-only)
+                INSTALL_CLI=false
+                INSTALL_APP=true
                 ;;
             -c | --clean)
                 # Only the C++ project has a CMake build directory to clean.
+                ;;
+            -z | --notarize)
+                NOTARIZE=true
                 ;;
             -v | --verbose)
                 set -x
@@ -57,6 +74,10 @@ parse_arguments() {
         esac
         shift
     done
+
+    if [ "$NOTARIZE" = true ] && [ "$BASH_PLATFORM" != "mac" ]; then
+        print_error_and_exit "--notarize is only supported on macOS."
+    fi
 }
 
 install_windows_gui_app() {
@@ -106,6 +127,9 @@ install_windows_gui_app() {
 
 install_application() {
     parse_arguments "$@"
+    if [ "$NOTARIZE" = true ]; then
+        require_mac_developer_signing false
+    fi
     require_command cargo "Cargo not found in path. Maybe install rustup?"
 
     cd "$REPO"
@@ -113,14 +137,34 @@ install_application() {
     APP_DESTINATION="/Applications/$GUI_APP_BUNDLE"
 
     print_magenta "Installing binaries..."
-    cargo install --force --locked --path crates/cli
-    require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
-    copy_third_party_licenses "$(dirname "$(command -v "$CLI_BINARY_NAME")")/audiobatch-rs-licenses"
+    if [ "$INSTALL_CLI" = true ]; then
+        cargo install --force --locked --path crates/cli
+        require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
+        local cli_installed_path
+        cli_installed_path=$(command -v "$CLI_BINARY_NAME")
+        if [ "$BASH_PLATFORM" = "mac" ]; then
+            sign_mac_cli_binary "$cli_installed_path" "$CLI_BUNDLE_ID"
+            if [ "$NOTARIZE" = true ]; then
+                notarize_mac_artifact "$cli_installed_path"
+            fi
+        fi
+        copy_third_party_licenses "$(dirname "$cli_installed_path")/audiobatch-rs-licenses"
+    fi
 
-    if [ "$CLI_ONLY" = false ]; then
+    if [ "$INSTALL_APP" = true ]; then
         cargo build --release --locked --bin "$GUI_BINARY_NAME"
         if [ "$BASH_PLATFORM" = "mac" ]; then
-            create_mac_app_bundle ./target/release/"$GUI_BINARY_NAME" "$APP_DESTINATION"
+            if [ "$NOTARIZE" = true ]; then
+                local staged_dir
+                staged_dir=$(mktemp -d "${TMPDIR:-/tmp}/audiobatch-rs-app.XXXXXXXX")
+                create_mac_app_bundle ./target/release/"$GUI_BINARY_NAME" "$staged_dir/$GUI_APP_BUNDLE"
+                notarize_mac_artifact "$staged_dir/$GUI_APP_BUNDLE" --staple
+                rm -rf "${APP_DESTINATION:?}"
+                mv -f "$staged_dir/$GUI_APP_BUNDLE" "$APP_DESTINATION"
+                rm -rf "$staged_dir"
+            else
+                create_mac_app_bundle ./target/release/"$GUI_BINARY_NAME" "$APP_DESTINATION"
+            fi
         elif [ "$BASH_PLATFORM" = "windows" ]; then
             install_windows_gui_app
         fi
@@ -128,9 +172,11 @@ install_application() {
     echo ""
 
     print_green "Installed binaries:"
-    require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
-    echo "$("$CLI_BINARY_NAME" --version) from $(command -v "$CLI_BINARY_NAME")"
-    if [ "$CLI_ONLY" = false ]; then
+    if [ "$INSTALL_CLI" = true ]; then
+        require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
+        echo "$("$CLI_BINARY_NAME" --version) from $(command -v "$CLI_BINARY_NAME")"
+    fi
+    if [ "$INSTALL_APP" = true ]; then
         if [ "$BASH_PLATFORM" = "mac" ]; then
             echo "$("$APP_DESTINATION/Contents/MacOS/$GUI_BINARY_NAME" --version) in $APP_DESTINATION"
         elif [ "$BASH_PLATFORM" = "windows" ]; then
@@ -141,7 +187,9 @@ install_application() {
     fi
     echo ""
 
-    "$DIR/completions.sh" --silent
+    if [ "$INSTALL_CLI" = true ]; then
+        "$DIR/completions.sh" --silent
+    fi
 }
 
 install_application "$@"
