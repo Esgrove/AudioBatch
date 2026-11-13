@@ -5,17 +5,11 @@
 #include "Parameters.h"
 #include "ui/ControlSlider.h"
 #include "ui/ImageControlLookAndFeel.h"
-#include <system_error>
 
 #include <algorithm>
 #include <array>
-#include <charconv>
-#include <cmath>
 #include <functional>
-#include <memory>
 #include <optional>
-#include <span>
-#include <string>
 #include <utility>
 
 namespace esgrove::image_control
@@ -74,21 +68,8 @@ double settingValueFromText(const juce::String& text, const juce::String& suffix
     if (token.endsWithIgnoreCase(suffix)) {
         token = token.dropLastCharacters(suffix.length()).trimEnd();
     }
-    auto number = token.toStdString();
-    if (!number.empty() && number.front() == '+') {
-        number.erase(0, 1);
-        if (number.empty() || number.front() == '+' || number.front() == '-') {
-            return currentValue;
-        }
-    }
-    double result = 0.0;
-    const std::span<const char> characters(number.data(), number.size());
-    const auto* end = std::to_address(characters.end());
-    const auto parsed = std::from_chars(characters.data(), end, result);
-    if (parsed.ec != std::errc {} || parsed.ptr != end || !std::isfinite(result)) {
-        return currentValue;
-    }
-    return result;
+    const auto number = token.toStdString();
+    return parseFiniteDouble(number, true).value_or(currentValue);
 }
 
 /// Binds a numeric setting while keeping JUCE's inline text editor strict and unit-aware.

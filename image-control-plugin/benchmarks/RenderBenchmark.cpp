@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 
 #include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -133,13 +134,20 @@ void requireMeasurementBuild()
 template<typename Value>
 Value parseNumber(const std::string_view text)
 {
-    Value value {0};
-    const auto* end = std::to_address(text.end());
-    const auto parsed = std::from_chars(std::to_address(text.begin()), end, value);
-    if (parsed.ec != std::errc {} || parsed.ptr != end) {
+    if constexpr (std::is_same_v<Value, float>) {
+        if (const auto parsed = parseFiniteFloat(text, false)) {
+            return *parsed;
+        }
         throw std::runtime_error("Expected a complete numeric option value");
+    } else {
+        Value value {0};
+        const auto* end = std::to_address(text.end());
+        const auto parsed = std::from_chars(std::to_address(text.begin()), end, value);
+        if (parsed.ec != std::errc {} || parsed.ptr != end) {
+            throw std::runtime_error("Expected a complete numeric option value");
+        }
+        return value;
     }
-    return value;
 }
 
 /// Applies one value-taking option, keeping token iteration separate from argument interpretation.

@@ -5,6 +5,10 @@
 
 cmake_minimum_required(VERSION 4.2)
 
+if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
+endif()
+
 project(
     "ImageControl"
     VERSION 1.0.0
@@ -16,9 +20,6 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
-endif()
 
 option(IMAGE_CONTROL_BUILD_TESTS "Build the ImageControl unit tests and benchmark" ${PROJECT_IS_TOP_LEVEL})
 option(IMAGE_CONTROL_HARDENING "Enable standard library hardening, as the AudioBatch build does" ON)
@@ -626,8 +627,11 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     # Its native helper owns a real context, while explicit offscreen batches exclude swap and presentation pacing.
     juce_add_console_app(ImageControlRenderBenchmark PRODUCT_NAME "ImageControlRenderBenchmark")
     target_sources(
-        ImageControlRenderBenchmark PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/RenderBenchmark.cpp"
-                                            "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.cpp"
+        ImageControlRenderBenchmark
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/RenderBenchmark.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.cpp"
     )
     target_include_directories(ImageControlRenderBenchmark PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_compile_definitions(
@@ -641,7 +645,12 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     )
     target_link_libraries(
         ImageControlRenderBenchmark
-        PRIVATE juce::juce_gui_basics juce::juce_opengl ImageControlAssets fmt::fmt
+        PRIVATE
+            juce::juce_audio_processors
+            juce::juce_gui_basics
+            juce::juce_opengl
+            ImageControlAssets
+            fmt::fmt
         PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
     )
     if(IMAGE_CONTROL_HARDENING)
@@ -657,7 +666,10 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     endif()
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/RenderBenchmark.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.cpp" TARGET_DIRECTORY ImageControlRenderBenchmark
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.cpp"
+        TARGET_DIRECTORY
+        ImageControlRenderBenchmark
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
 
