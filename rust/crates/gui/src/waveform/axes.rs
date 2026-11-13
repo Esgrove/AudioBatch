@@ -53,9 +53,8 @@ pub(super) fn paint_amplitude_axis(
     cx: &mut App,
 ) {
     for label in amplitude_labels(geometry, channels, window.rem_size()) {
-        let text = format!("{:.0}", label.decibels);
         paint_label(
-            text.into(),
+            SharedString::new_static(label.text),
             label.bounds,
             geometry.amplitude_axis.origin.x >= geometry.waveform.right(),
             white(0.8),

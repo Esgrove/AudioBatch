@@ -35,7 +35,7 @@ use crate::plugins::chain_window::{
 use crate::plugins::labels::{group_by_vendor, latency_text, plugin_label, slot_label};
 use crate::plugins::live_chain::{LiveChain, LiveSlot, SlotId};
 use crate::plugins::manager_window::{
-    MANAGER_HEIGHT, MANAGER_TITLE, MANAGER_WIDTH, ManagerEvent, ManagerSnapshot, ManagerView,
+    ActiveScan, MANAGER_HEIGHT, MANAGER_TITLE, MANAGER_WIDTH, ManagerEvent, ManagerSnapshot, ManagerView, SkippedBundle,
 };
 use crate::plugins::{FALLBACK_SAMPLE_RATE, RunningScan, SCANNING_STATUS, ScanStatus};
 
@@ -262,6 +262,7 @@ impl AppView {
             self.menu_state.scanning_plugins = self.plugins.is_scanning();
             self.refresh_menus(cx);
         }
+        self.sync_action_menus(cx);
         self.sync_chain_window(cx);
         self.sync_manager_window(cx);
         cx.notify();
@@ -270,6 +271,7 @@ impl AppView {
     /// Shows a message in the status bar.
     pub(super) fn report_status(&mut self, message: String, cx: &mut Context<Self>) {
         self.status = message.into();
+        self.status_sticky = true;
         cx.notify();
     }
 
@@ -283,6 +285,83 @@ impl AppView {
                 }
             }
         })
+    }
+
+    /// Starts a scan of the scan folders on a background thread.
+    /// The scan lock is held until the result is saved, so a scan in the CLI cannot run at the same time.
+    pub(super) fn start_plugin_scan(&mut self, cx: &mut Context<Self>) {
+        if self.plugins.is_scanning() {
+            return;
+        }
+        let paths = self.plugins.paths.clone();
+        let prepared = ScanLock::try_acquire(&paths.scan_lock)
+            .map_err(anyhow::Error::from)
+            .and_then(|lock| {
+                let Some(lock) = lock else {
+                    return Ok(None);
+                };
+                let audiobatch_plugins::library::RecoveredData {
+                    value: known,
+                    warning: recovered,
+                } = KnownPlugins::load_recovering(&paths.known_plugins)?;
+                let options = ScanOptions::new(known.search_folders(), Some(paths.worker_log.clone()))?;
+                Ok(Some(PreparedScan {
+                    lock,
+                    known,
+                    options,
+                    recovered,
+                }))
+            });
+        let PreparedScan {
+            lock,
+            mut known,
+            options,
+            recovered,
+        } = match prepared {
+            Ok(Some(prepared)) => prepared,
+            Ok(None) => return self.report_status(String::from(SCAN_BUSY_MESSAGE), cx),
+            Err(error) => return self.report_status(format!("Could not start the plugin scan: {error:#}"), cx),
+        };
+        if let Some(message) = recovered {
+            self.report_status(message, cx);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(Mutex::new(ScanStatus::default()));
+        let scan = {
+            let cancel = Arc::clone(&cancel);
+            let progress = Arc::clone(&progress);
+            cx.background_executor().spawn(async move {
+                let report = scan_plugins(
+                    &lock,
+                    &mut known,
+                    &options,
+                    &|| cancel.load(Ordering::Relaxed),
+                    &mut |update| {
+                        if let Ok(mut shared) = progress.lock() {
+                            *shared = ScanStatus {
+                                fraction: update.fraction,
+                                index: update.index,
+                                total: update.total,
+                                bundle: update.bundle.to_path_buf(),
+                            };
+                        }
+                    },
+                )?;
+                known
+                    .save_to(&paths.known_plugins)
+                    .context("Could not save the plugin list")?;
+                drop(lock);
+                anyhow::Ok(CompletedScan { known, report })
+            })
+        };
+        let task = cx.spawn(async move |this, cx| {
+            let result = scan.await;
+            let _ = this.update(cx, |view, cx| view.finish_plugin_scan(result, cx));
+        });
+        self.plugins.scan = Some(RunningScan { cancel, progress, task });
+        self.status = SCANNING_STATUS.into();
+        self.status_sticky = false;
+        self.refresh_plugin_views(cx);
     }
 
     /// Prepares the live instances again after a change of the output rate or a restart request,
@@ -335,8 +414,7 @@ impl AppView {
                         .plugins
                         .chain
                         .slot(*id)
-                        .map(|slot| plugin_label(slot.plugin()))
-                        .unwrap_or_default();
+                        .map_or_default(|slot| plugin_label(slot.plugin()));
                     self.report_status(format!("{label}: {error:#}"), cx);
                 }
                 false
@@ -575,18 +653,18 @@ impl AppView {
             .last_report
             .iter()
             .flat_map(|report| {
-                let timed_out = report
-                    .timed_out
-                    .iter()
-                    .map(|bundle| (bundle.clone(), "Timed out".to_string()));
-                let failed = report
-                    .failed
-                    .iter()
-                    .map(|(bundle, error)| (bundle.clone(), format!("Could not be loaded: {error}")));
-                let no_plugins = report
-                    .no_plugins
-                    .iter()
-                    .map(|bundle| (bundle.clone(), "No audio effects".to_string()));
+                let timed_out = report.timed_out.iter().map(|bundle| SkippedBundle {
+                    bundle: bundle.clone(),
+                    reason: "Timed out".to_string(),
+                });
+                let failed = report.failed.iter().map(|(bundle, error)| SkippedBundle {
+                    bundle: bundle.clone(),
+                    reason: format!("Could not be loaded: {error}"),
+                });
+                let no_plugins = report.no_plugins.iter().map(|bundle| SkippedBundle {
+                    bundle: bundle.clone(),
+                    reason: "No audio effects".to_string(),
+                });
                 timed_out.chain(failed).chain(no_plugins)
             })
             .collect();
@@ -597,10 +675,10 @@ impl AppView {
             custom_folders: !known.custom_folders.is_empty(),
             blacklist: known.blacklist.clone(),
             skipped,
-            scanning: self
-                .plugins
-                .scan_progress()
-                .map(|status| (status.fraction, status.bundle_name())),
+            scanning: self.plugins.scan_progress().map(|status| ActiveScan {
+                fraction: status.fraction,
+                bundle: status.bundle_name(),
+            }),
             last_scan: self.plugins.last_report.as_ref().map(ScanReport::summary),
         }
     }
@@ -629,82 +707,6 @@ impl AppView {
         };
         let snapshot = self.manager_snapshot();
         view.update(cx, |view, cx| view.sync(snapshot, cx));
-    }
-
-    /// Starts a scan of the scan folders on a background thread.
-    /// The scan lock is held until the result is saved, so a scan in the CLI cannot run at the same time.
-    pub(super) fn start_plugin_scan(&mut self, cx: &mut Context<Self>) {
-        if self.plugins.is_scanning() {
-            return;
-        }
-        let paths = self.plugins.paths.clone();
-        let prepared = ScanLock::try_acquire(&paths.scan_lock)
-            .map_err(anyhow::Error::from)
-            .and_then(|lock| {
-                let Some(lock) = lock else {
-                    return Ok(None);
-                };
-                let audiobatch_plugins::library::RecoveredData {
-                    value: known,
-                    warning: recovered,
-                } = KnownPlugins::load_recovering(&paths.known_plugins)?;
-                let options = ScanOptions::new(known.search_folders(), Some(paths.worker_log.clone()))?;
-                Ok(Some(PreparedScan {
-                    lock,
-                    known,
-                    options,
-                    recovered,
-                }))
-            });
-        let PreparedScan {
-            lock,
-            mut known,
-            options,
-            recovered,
-        } = match prepared {
-            Ok(Some(prepared)) => prepared,
-            Ok(None) => return self.report_status(String::from(SCAN_BUSY_MESSAGE), cx),
-            Err(error) => return self.report_status(format!("Could not start the plugin scan: {error:#}"), cx),
-        };
-        if let Some(message) = recovered {
-            self.report_status(message, cx);
-        }
-        let cancel = Arc::new(AtomicBool::new(false));
-        let progress = Arc::new(Mutex::new(ScanStatus::default()));
-        let scan = {
-            let cancel = Arc::clone(&cancel);
-            let progress = Arc::clone(&progress);
-            cx.background_executor().spawn(async move {
-                let report = scan_plugins(
-                    &lock,
-                    &mut known,
-                    &options,
-                    &|| cancel.load(Ordering::Relaxed),
-                    &mut |update| {
-                        if let Ok(mut shared) = progress.lock() {
-                            *shared = ScanStatus {
-                                fraction: update.fraction,
-                                index: update.index,
-                                total: update.total,
-                                bundle: update.bundle.to_path_buf(),
-                            };
-                        }
-                    },
-                )?;
-                known
-                    .save_to(&paths.known_plugins)
-                    .context("Could not save the plugin list")?;
-                drop(lock);
-                anyhow::Ok(CompletedScan { known, report })
-            })
-        };
-        let task = cx.spawn(async move |this, cx| {
-            let result = scan.await;
-            let _ = this.update(cx, |view, cx| view.finish_plugin_scan(result, cx));
-        });
-        self.plugins.scan = Some(RunningScan { cancel, progress, task });
-        self.status = SCANNING_STATUS.into();
-        self.refresh_plugin_views(cx);
     }
 
     /// Applies the result of a scan to the known plugins and shows its summary.

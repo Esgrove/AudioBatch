@@ -4,7 +4,7 @@
 use std::sync::{Arc, OnceLock};
 
 use audiobatch_core::spectrogram::{FREQUENCY_ROWS, SpectrogramData, frequency_to_mel};
-use gpui_kit::{App, Bounds, Corners, Pixels, RenderImage, Window, fill, point, px, rgb, size};
+use gpui_kit::{App, Bounds, Corners, Pixels, RenderImage, SharedString, Window, fill, point, px, rgb, size};
 use image::{Frame, RgbaImage};
 
 use super::axes::paint_label;
@@ -24,8 +24,17 @@ const PALETTE_ANCHORS: [[u8; 3]; 9] = [
     [0xff, 0xf5, 0xd7],
 ];
 /// Fixed frequency captions, independent of source sample rate.
-const FREQUENCIES: [f64; 10] = [
-    0.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16_000.0, 18_000.0, 20_000.0,
+const FREQUENCIES: [(f64, &str); 10] = [
+    (0.0, "0"),
+    (250.0, "250"),
+    (500.0, "500"),
+    (1000.0, "1k"),
+    (2000.0, "2k"),
+    (4000.0, "4k"),
+    (8000.0, "8k"),
+    (16_000.0, "16k"),
+    (18_000.0, "18k"),
+    (20_000.0, "20k"),
 ];
 /// Immutable 256-entry BGRA lookup shared by every source artifact.
 static PALETTE: OnceLock<[[u8; 4]; 256]> = OnceLock::new();
@@ -115,7 +124,7 @@ fn raster_bounds(source: &SpectrogramData, viewport: Viewport) -> RasterBounds {
         size(px(finish - start), viewport.plot.size.height),
     );
     let nyquist = rate * 0.5;
-    let fraction = frequency_to_mel(nyquist) / frequency_to_mel(nyquist.max(FREQUENCIES[9]));
+    let fraction = frequency_to_mel(nyquist) / frequency_to_mel(nyquist.max(FREQUENCIES[9].0));
     let height = px(f32::from(viewport.plot.size.height) * fraction as f32);
     let image_bounds = Bounds::new(
         point(px(start), viewport.plot.bottom() - height),
@@ -139,11 +148,11 @@ pub(super) fn paint_frequency_axis(
         return;
     }
     let nyquist = f64::from(rate) * 0.5;
-    let maximum_mel = frequency_to_mel(nyquist.max(FREQUENCIES[9]));
+    let maximum_mel = frequency_to_mel(nyquist.max(FREQUENCIES[9].0));
     let height = relative(10.0, window.rem_size());
     let spacing = relative(16.0, window.rem_size());
     let mut occupied: Vec<(f32, f32)> = Vec::new();
-    for frequency in FREQUENCIES {
+    for (frequency, caption) in FREQUENCIES {
         let y = (frequency_to_mel(frequency) / maximum_mel) as f32;
         let y = y.mul_add(-f32::from(plot.size.height), f32::from(plot.bottom()));
         let top = height.mul_add(-0.5, y).clamp(
@@ -154,10 +163,9 @@ pub(super) fn paint_frequency_axis(
             continue;
         }
         occupied.push((top, top + spacing));
-        let text = frequency_label(frequency);
         let label = Bounds::new(point(gutter.origin.x, px(top)), size(gutter.size.width, px(height)));
         paint_label(
-            text.into(),
+            SharedString::new_static(caption),
             label,
             gutter.origin.x >= plot.right(),
             white(0.8),
@@ -169,15 +177,6 @@ pub(super) fn paint_frequency_axis(
             white(0.1),
         ));
     }
-}
-
-/// Formats fixed frequency references without unnecessary trailing decimal zeroes.
-fn frequency_label(frequency: f64) -> String {
-    if frequency < 1000.0 {
-        return format!("{frequency:.0}");
-    }
-    let text = format!("{:.3}", frequency / 1000.0);
-    format!("{}k", text.trim_end_matches('0').trim_end_matches('.'))
 }
 
 /// Builds the native smoothstep lookup, including the integer 8-bit color tween arithmetic.
@@ -255,7 +254,7 @@ mod test_projection {
         let image = raster_bounds(&source, viewport).image;
         assert!(image.origin.y > viewport.plot.origin.y);
         assert!((f32::from(image.bottom() - viewport.plot.bottom())).abs() < 0.001);
-        assert!((FREQUENCIES[9] - 20_000.0).abs() < f64::EPSILON);
+        assert!((FREQUENCIES[9].0 - 20_000.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -276,9 +275,10 @@ mod test_projection {
     }
 
     #[test]
-    fn frequency_captions_preserve_low_nyquist_without_redundant_zeroes() {
-        assert_eq!(frequency_label(20_000.0), "20k");
-        assert_eq!(frequency_label(5512.0), "5.512k");
-        assert_eq!(frequency_label(250.0), "250");
+    fn frequency_captions_cover_reference_range_without_redundant_zeroes() {
+        assert_eq!(FREQUENCIES[0], (0.0, "0"));
+        assert_eq!(FREQUENCIES[1], (250.0, "250"));
+        assert_eq!(FREQUENCIES[3], (1000.0, "1k"));
+        assert_eq!(FREQUENCIES[9], (20_000.0, "20k"));
     }
 }

@@ -39,6 +39,31 @@ const IID_IDATA_OBJECT: GUID = GUID::from_u128(0x0000_010e_0000_0000_c000_0000_0
 /// Interface id of `IDropSource`.
 const IID_IDROP_SOURCE: GUID = GUID::from_u128(0x0000_0121_0000_0000_c000_0000_0000_0046);
 
+/// The vtable all drop sources share.
+static DROP_SOURCE_VTBL: DropSourceVtbl = DropSourceVtbl {
+    query_interface: drop_source_query_interface,
+    add_ref: drop_source_add_ref,
+    release: drop_source_release,
+    query_continue_drag: drop_source_query_continue_drag,
+    give_feedback: drop_source_give_feedback,
+};
+
+/// The vtable all data objects share.
+static DATA_OBJECT_VTBL: DataObjectVtbl = DataObjectVtbl {
+    query_interface: data_object_query_interface,
+    add_ref: data_object_add_ref,
+    release: data_object_release,
+    get_data: data_object_get_data,
+    get_data_here: data_object_not_implemented_medium,
+    query_get_data: data_object_query_get_data,
+    get_canonical_format_etc: data_object_get_canonical_format_etc,
+    set_data: data_object_set_data,
+    enum_format_etc: data_object_enum_format_etc,
+    d_advise: data_object_d_advise,
+    d_unadvise: data_object_d_unadvise,
+    enum_d_advise: data_object_enum_d_advise,
+};
+
 /// Vtable of `IDropSource`, in the order of its methods.
 #[repr(C)]
 struct DropSourceVtbl {
@@ -55,15 +80,6 @@ struct DropSource {
     vtbl: *const DropSourceVtbl,
     references: AtomicU32,
 }
-
-/// The vtable all drop sources share.
-static DROP_SOURCE_VTBL: DropSourceVtbl = DropSourceVtbl {
-    query_interface: drop_source_query_interface,
-    add_ref: drop_source_add_ref,
-    release: drop_source_release,
-    query_continue_drag: drop_source_query_continue_drag,
-    give_feedback: drop_source_give_feedback,
-};
 
 /// Vtable of `IDataObject`, in the order of its methods.
 #[repr(C)]
@@ -85,27 +101,13 @@ struct DataObjectVtbl {
 /// The `IDataObject` of a file drag, which offers the files as `CF_HDROP` in global memory only.
 #[repr(C)]
 struct DataObject {
+    /// Pointer to the shared `IDataObject` vtable.
     vtbl: *const DataObjectVtbl,
+    /// Active COM reference count.
     references: AtomicU32,
     /// The dragged files.
     paths: Vec<PathBuf>,
 }
-
-/// The vtable all data objects share.
-static DATA_OBJECT_VTBL: DataObjectVtbl = DataObjectVtbl {
-    query_interface: data_object_query_interface,
-    add_ref: data_object_add_ref,
-    release: data_object_release,
-    get_data: data_object_get_data,
-    get_data_here: data_object_not_implemented_medium,
-    query_get_data: data_object_query_get_data,
-    get_canonical_format_etc: data_object_get_canonical_format_etc,
-    set_data: data_object_set_data,
-    enum_format_etc: data_object_enum_format_etc,
-    d_advise: data_object_d_advise,
-    d_unadvise: data_object_d_unadvise,
-    enum_d_advise: data_object_enum_d_advise,
-};
 
 /// Drags the files out of the window as copies, and returns true when another application took them.
 ///
@@ -172,7 +174,12 @@ fn file_list_utf16(paths: &[PathBuf]) -> Vec<u16> {
 fn create_hdrop(paths: &[PathBuf]) -> HGLOBAL {
     let list = file_list_utf16(paths);
     let header_size = size_of::<DROPFILES>();
-    let list_size = list.len() * size_of::<u16>();
+    let Some(list_size) = list.len().checked_mul(size_of::<u16>()) else {
+        return ptr::null_mut();
+    };
+    let Some(total_size) = header_size.checked_add(list_size) else {
+        return ptr::null_mut();
+    };
     let Ok(files_offset) = u32::try_from(header_size) else {
         return ptr::null_mut();
     };
@@ -185,7 +192,7 @@ fn create_hdrop(paths: &[PathBuf]) -> HGLOBAL {
     // SAFETY: The block is allocated with room for the header and the list, locked while it is written,
     // and both writes stay inside it. The header is packed, so it is written unaligned.
     unsafe {
-        let memory = GlobalAlloc(GHND, header_size + list_size);
+        let memory = GlobalAlloc(GHND, total_size);
         if memory.is_null() {
             return ptr::null_mut();
         }
@@ -201,14 +208,29 @@ fn create_hdrop(paths: &[PathBuf]) -> HGLOBAL {
     }
 }
 
-/// Answers `QueryInterface` for an object that implements `IUnknown` and one other interface.
+/// Answers `QueryInterface` for an object that implements `IUnknown` and one other interface,
+/// always clearing a non-null `object` out-pointer on failure as COM requires.
 ///
 /// # Safety
 ///
 /// `this` must point to a live COM object, and `riid` and `object` must be valid pointers or null.
-unsafe fn query_interface(this: *mut c_void, riid: *const GUID, object: *mut *mut c_void, interface: &GUID) -> bool {
-    if riid.is_null() || object.is_null() {
-        return false;
+unsafe fn query_interface(
+    this: *mut c_void,
+    riid: *const GUID,
+    object: *mut *mut c_void,
+    interface: &GUID,
+    add_ref: impl FnOnce(),
+) -> HRESULT {
+    if object.is_null() {
+        return E_POINTER;
+    }
+    // SAFETY: `object` is non-null and valid for writing.
+    // COM requires clearing `*object` on failure.
+    unsafe {
+        *object = ptr::null_mut();
+    }
+    if riid.is_null() {
+        return E_POINTER;
     }
     // SAFETY: The caller guarantees that both pointers are valid when they are not null.
     unsafe {
@@ -221,10 +243,10 @@ unsafe fn query_interface(this: *mut c_void, riid: *const GUID, object: *mut *mu
         };
         if matches(&IID_IUnknown) || matches(interface) {
             *object = this;
-            true
+            add_ref();
+            S_OK
         } else {
-            *object = ptr::null_mut();
-            false
+            E_NOINTERFACE
         }
     }
 }
@@ -237,14 +259,9 @@ unsafe extern "system" fn drop_source_query_interface(
 ) -> HRESULT {
     // SAFETY: OLE calls this with the live drop source and valid or null pointers.
     unsafe {
-        if query_interface(this.cast(), riid, object, &IID_IDROP_SOURCE) {
+        query_interface(this.cast(), riid, object, &IID_IDROP_SOURCE, || {
             drop_source_add_ref(this);
-            S_OK
-        } else if object.is_null() {
-            E_POINTER
-        } else {
-            E_NOINTERFACE
-        }
+        })
     }
 }
 
@@ -294,14 +311,9 @@ unsafe extern "system" fn data_object_query_interface(
 ) -> HRESULT {
     // SAFETY: OLE calls this with the live data object and valid or null pointers.
     unsafe {
-        if query_interface(this.cast(), riid, object, &IID_IDATA_OBJECT) {
+        query_interface(this.cast(), riid, object, &IID_IDATA_OBJECT, || {
             data_object_add_ref(this);
-            S_OK
-        } else if object.is_null() {
-            E_POINTER
-        } else {
-            E_NOINTERFACE
-        }
+        })
     }
 }
 

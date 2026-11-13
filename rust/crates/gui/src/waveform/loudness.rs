@@ -152,6 +152,9 @@ pub(super) fn paint_curve(
                 continue;
             };
             if rest.is_empty() {
+                let radius = px(width * 0.5);
+                let dot = Bounds::new(point(start.x - radius, start.y - radius), size(px(width), px(width)));
+                window.paint_quad(fill(dot, color).corner_radii(radius));
                 continue;
             }
             let mut builder = PathBuilder::stroke(px(width));

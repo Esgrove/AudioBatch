@@ -8,7 +8,8 @@
 //! and a failure keeps the row with the reason in its Status column.
 //! The end of a run shows its summary in the status bar and lists any failures in a dialog.
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,10 +44,10 @@ impl AppView {
         self.normalize_task.is_some() && self.normalize_run.as_ref().is_some_and(|run| !run.completed)
     }
 
-    /// Returns true when the selected file can be normalized now.
-    /// It runs on every render, so it leaves checking that the file still exists to `normalize_selected`.
+    /// Returns true when the selected files can be normalized now.
+    /// Normalization is all-or-nothing across a multi-selection.
     pub(super) fn can_normalize_selected(&self, cx: &Context<Self>) -> bool {
-        self.can_start_normalization() && self.selected_record(cx).is_some()
+        self.can_start_normalization() && self.selected_normalizable_records(cx).is_some()
     }
 
     /// Returns true when a normalization could start now, whatever is selected.
@@ -67,20 +68,22 @@ impl AppView {
             return false;
         };
         self.status = SharedString::from(reason);
+        self.status_sticky = true;
         cx.notify();
         true
     }
 
-    /// Normalizes the selected file to the target.
+    /// Normalizes the selected files to the target when every selected file is ready.
     pub(super) fn normalize_selected(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let records = self.selected_ready_records(cx);
-        if records.is_empty() {
+        let Some(records) = self.selected_normalizable_records(cx) else {
             self.status = SharedString::from("Select an analyzed file to normalize");
+            self.status_sticky = true;
             cx.notify();
             return;
-        }
+        };
         if records.iter().any(|record| !record.path.is_file()) {
             self.status = SharedString::from("A selected file no longer exists");
+            self.status_sticky = true;
             cx.notify();
             return;
         }
@@ -111,16 +114,26 @@ impl AppView {
             records.len(),
             describe_target(&self.settings)
         );
+        let confirmed_paths: HashSet<PathBuf> = records.iter().map(|record| record.path.clone()).collect();
         let answer = window.prompt(
             PromptLevel::Warning,
-            OperationKind::Normalize.dialog_title(),
+            "Normalize All Files",
             Some(&detail),
             &["Normalize", "Cancel"],
             cx,
         );
         cx.spawn_in(window, async move |this, cx| {
             if answer.await == Ok(0) {
-                let _ = this.update_in(cx, |view, window, cx| view.start_normalization(records, window, cx));
+                let _ = this.update_in(cx, |view, window, cx| {
+                    let current: Vec<AnalysisRecord> = {
+                        let delegate = view.table.read(cx).delegate();
+                        (0..delegate.len())
+                            .filter_map(|index| delegate.row(index).and_then(|row| row.ready_record()).cloned())
+                            .filter(|record| confirmed_paths.contains(&record.path) && record.path.is_file())
+                            .collect()
+                    };
+                    view.start_normalization(current, window, cx);
+                });
             }
         })
         .detach();
@@ -228,6 +241,9 @@ impl AppView {
                 OperationOutcome::Failed { error } => delegate.fail_operation(&source, &error),
                 OperationOutcome::CommittedButUnanalyzed { mut output, error } => {
                     output.spectrogram = None;
+                    if self.selected.as_deref() != Some(output.path.as_path()) {
+                        output.waveform = None;
+                    }
                     let message = RowMessage {
                         text: error,
                         is_error: true,
@@ -236,11 +252,13 @@ impl AppView {
                 }
                 OperationOutcome::Succeeded { mut output, notice } => {
                     output.spectrogram = None;
+                    if self.selected.as_deref() != Some(output.path.as_path()) {
+                        output.waveform = None;
+                    }
                     let message = notice.map(|text| RowMessage { text, is_error: false });
                     delegate.replace_after_operation(&source, output, message);
                 }
             }
-            delegate.release_waveforms_except(self.selected.as_deref());
             cx.notify();
         });
         if let Some(output_path) = output_path {
@@ -372,8 +390,10 @@ impl AppView {
             coordinator.start(records, options);
         let run = OperationRun::new(OperationKind::Normalize, run_id, total);
         self.status = run.progress_text().into();
+        self.status_sticky = false;
         self.normalize_run = Some(run);
         self.normalize_task = Some(spawn_normalize_drain(receiver, window, cx));
+        self.sync_action_menus(cx);
         cx.notify();
     }
 
@@ -429,6 +449,7 @@ impl AppView {
         if completed && let Some(run) = self.normalize_run.clone() {
             self.finish_operation_run(&run, window, cx);
         }
+        self.sync_action_menus(cx);
         cx.notify();
     }
 

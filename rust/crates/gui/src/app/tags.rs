@@ -23,7 +23,7 @@ impl AppView {
             let state = SeratoOverviewState::from_tags(path, tags);
             self.show_serato_overview(path, state.overview().cloned(), cx);
         }
-        let cues = tags.as_deref().map(cue_markers).unwrap_or_default();
+        let cues = tags.as_deref().map_or_default(cue_markers);
         self.start_at_first_cue(path, &cues, cx);
         self.waveform.update(cx, |waveform, cx| waveform.set_cues(cues, cx));
         self.selected_tags = tags.map(|tags| (PathBuf::from(path), tags));
@@ -74,17 +74,14 @@ impl AppView {
 
 /// Returns the Serato cue points of a file as waveform markers.
 fn cue_markers(tags: &FileTags) -> Vec<CueMarker> {
-    tags.serato
-        .as_ref()
-        .map(|serato| {
-            serato
-                .cues()
-                .map(|cue| CueMarker {
-                    seconds: f64::from(cue.position) / 1000.0,
-                    color: cue.color.to_rgb_u32(),
-                    slot: cue.index,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    tags.serato.as_ref().map_or_default(|serato| {
+        serato
+            .cues()
+            .map(|cue| CueMarker {
+                seconds: f64::from(cue.position) / 1000.0,
+                color: cue.color.to_rgb_u32(),
+                slot: cue.index,
+            })
+            .collect()
+    })
 }

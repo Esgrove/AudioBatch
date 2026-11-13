@@ -276,26 +276,32 @@ pub const fn fit_height(wide: bool) -> f32 {
     } else {
         narrow_settings_height()
     };
-    settings + GROUP_SPACING + PLAYBACK_BUTTON_HEIGHT + VERTICAL_PADDING * 2.0 + BORDER_WIDTH * 2.0
+    BORDER_WIDTH.mul_add(
+        2.0,
+        VERTICAL_PADDING.mul_add(2.0, settings + GROUP_SPACING + PLAYBACK_BUTTON_HEIGHT),
+    )
 }
 
 /// Returns the height of the zoom and input gain groups with the spacing between them.
 const fn slider_groups_height() -> f32 {
     let group = CAPTION_ROW_HEIGHT + ITEM_SPACING + SLIDER_ROW_HEIGHT;
-    group * 2.0 + GROUP_SPACING
+    group.mul_add(2.0, GROUP_SPACING)
 }
 
 /// Returns the height of the scrolling controls of the one-column layout:
 /// the sliders, the options, the normalization target, and the two buttons, one group below the other.
 const fn narrow_settings_height() -> f32 {
     let target = MODE_ROW_HEIGHT + ITEM_SPACING + BUTTON_HEIGHT;
-    slider_groups_height() + OPTION_ROW_HEIGHT + target + BUTTON_HEIGHT * 2.0 + GROUP_SPACING * 4.0
+    GROUP_SPACING.mul_add(
+        4.0,
+        BUTTON_HEIGHT.mul_add(2.0, slider_groups_height() + OPTION_ROW_HEIGHT + target),
+    )
 }
 
 /// Returns the height of the scrolling controls of the wide layout:
 /// the sliders above two columns of three button-high rows.
 const fn wide_settings_height() -> f32 {
-    slider_groups_height() + GROUP_SPACING + BUTTON_HEIGHT * 3.0 + ITEM_SPACING * 2.0
+    ITEM_SPACING.mul_add(2.0, BUTTON_HEIGHT.mul_add(3.0, slider_groups_height() + GROUP_SPACING))
 }
 
 /// Renders the controls column, sending what the user does to `on_event`.
@@ -442,7 +448,7 @@ fn wide_left_column(state: &ControlsState<'_>, on_event: &EventCallback) -> Div 
     let preview_chain = {
         let on_event = Rc::clone(on_event);
         Checkbox::new(control_ids::PREVIEW_CHAIN)
-            .label("Preview chain")
+            .label(control_ids::PREVIEW_CHAIN_LABEL)
             .small()
             .tooltip(PREVIEW_CHAIN_TOOLTIP)
             .checked(state.preview_chain)
@@ -528,7 +534,7 @@ fn gain_track(state: &ControlsState<'_>, on_event: &EventCallback) -> impl gpui_
 fn plugin_chain_button(state: &ControlsState<'_>, on_event: &EventCallback) -> Button {
     column_button(
         control_ids::PLUGIN_CHAIN,
-        "Plugin Chain",
+        control_ids::PLUGIN_CHAIN_LABEL,
         format!("{CHAIN_TOOLTIP}\nChain: {}", state.chain_summary),
         ControlsEvent::OpenPluginChain,
         on_event,
@@ -539,7 +545,7 @@ fn plugin_chain_button(state: &ControlsState<'_>, on_event: &EventCallback) -> B
 fn audio_settings_button(on_event: &EventCallback) -> Button {
     column_button(
         control_ids::AUDIO_SETTINGS,
-        "Audio Settings",
+        control_ids::AUDIO_SETTINGS_LABEL,
         String::from(SETTINGS_TOOLTIP),
         ControlsEvent::OpenSettings,
         on_event,
@@ -569,7 +575,7 @@ fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
     let normalize_first = {
         let on_event = Rc::clone(on_event);
         Checkbox::new(control_ids::PROCESS_NORMALIZE_FIRST)
-            .label("Normalize")
+            .label(control_ids::PROCESS_NORMALIZE_FIRST_LABEL)
             .small()
             .tooltip(NORMALIZE_FIRST_TOOLTIP)
             .checked(state.normalize_first)
@@ -580,7 +586,7 @@ fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
     let overwrite = {
         let on_event = Rc::clone(on_event);
         Checkbox::new(control_ids::NORMALIZE_OVERWRITE)
-            .label("Overwrite")
+            .label(control_ids::NORMALIZE_OVERWRITE_LABEL)
             .small()
             .tooltip(OVERWRITE_TOOLTIP)
             .checked(state.overwrite)
@@ -618,10 +624,14 @@ fn target_group(state: &NormalizeControls<'_>, wide: bool, on_event: &EventCallb
         ButtonGroup::new("normalize-mode")
             .small()
             .w_full()
-            .child(mode_button(control_ids::NORMALIZE_PEAK, "Peak", NormalizeMode::Peak))
+            .child(mode_button(
+                control_ids::NORMALIZE_PEAK,
+                control_ids::NORMALIZE_PEAK_LABEL,
+                NormalizeMode::Peak,
+            ))
             .child(mode_button(
                 control_ids::NORMALIZE_LOUDNESS,
-                "Loudness",
+                control_ids::NORMALIZE_LOUDNESS_LABEL,
                 NormalizeMode::Loudness,
             ))
             .on_click(move |clicked: &Vec<usize>, window, cx| {
@@ -636,7 +646,7 @@ fn target_group(state: &NormalizeControls<'_>, wide: bool, on_event: &EventCallb
     let normalize = {
         let on_event = Rc::clone(on_event);
         Button::new(control_ids::NORMALIZE_SELECTED)
-            .label("Normalize")
+            .label(control_ids::NORMALIZE_SELECTED_LABEL)
             .tooltip(NORMALIZE_TOOLTIP)
             .disabled(!state.can_normalize)
             .w_full()

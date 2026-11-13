@@ -99,6 +99,7 @@ impl RunProgress {
 
 impl AppView {
     /// Adds folders and files to the list and scans every listed root again.
+    /// Nested subfolders already inside an existing root are skipped, and parent folders absorb child entries.
     /// Cached files come back immediately, so only new or changed files are decoded.
     pub(super) fn add_roots(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
         if self.blocked_by_file_operation(cx) {
@@ -107,8 +108,15 @@ impl AppView {
         let mut added = false;
         for path in paths.iter().map(|path| normalize_path(path)) {
             self.excluded.remove(&path);
-            if !self.roots.contains(&path) {
+            let covered = self
+                .roots
+                .iter()
+                .any(|existing| existing == &path || (existing.is_dir() && path.starts_with(existing)));
+            if !covered {
                 log_open_path(&path);
+                if path.is_dir() {
+                    self.roots.retain(|existing| !existing.starts_with(&path));
+                }
                 self.roots.push(path);
                 added = true;
             }
@@ -117,16 +125,29 @@ impl AppView {
             self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
         } else {
             self.status = SharedString::from("Folder is already included");
+            self.status_sticky = true;
             cx.notify();
         }
     }
 
-    /// Replaces the listed folders and files and scans them.
+    /// Replaces the listed folders and files and scans them, deduplicating nested folders.
     pub(super) fn replace_roots(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
         if self.blocked_by_file_operation(cx) {
             return;
         }
-        self.roots = paths.iter().map(|path| normalize_path(path)).collect();
+        let mut deduplicated: Vec<PathBuf> = Vec::new();
+        for path in paths.iter().map(|path| normalize_path(path)) {
+            let covered = deduplicated
+                .iter()
+                .any(|existing| existing == &path || (existing.is_dir() && path.starts_with(existing)));
+            if !covered {
+                if path.is_dir() {
+                    deduplicated.retain(|existing| !existing.starts_with(&path));
+                }
+                deduplicated.push(path);
+            }
+        }
+        self.roots = deduplicated;
         for path in &self.roots {
             log_open_path(path);
         }
@@ -161,11 +182,12 @@ impl AppView {
     pub(super) fn handle_drop(&mut self, paths: &[PathBuf], append: bool, cx: &mut Context<Self>) {
         let supported: Vec<PathBuf> = paths
             .iter()
-            .filter(|path| path.is_dir() || has_supported_extension(path))
+            .filter(|path| path.is_dir() || (path.is_file() && has_supported_extension(path)))
             .cloned()
             .collect();
         if supported.is_empty() {
             self.status = SharedString::from("No supported dropped files");
+            self.status_sticky = true;
             cx.notify();
             return;
         }
@@ -212,7 +234,9 @@ impl AppView {
             RunKind::Scan => "Scanning for audio files...",
             RunKind::Reanalyze => "Analyzing...",
         });
+        self.status_sticky = false;
         self.analysis_task = Some(spawn_event_drain(receiver, cx));
+        self.sync_action_menus(cx);
         cx.notify();
     }
 
@@ -311,8 +335,10 @@ impl AppView {
             self.autoplay_first_ready(cx);
         }
         if completed {
+            self.status_sticky = false;
             self.resume_enrichment(cx);
         }
+        self.sync_action_menus(cx);
         if selected_finished {
             self.reconcile_selected_preview(cx);
             self.refresh_selected_waveform(cx);

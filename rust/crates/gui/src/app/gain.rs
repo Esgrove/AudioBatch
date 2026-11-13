@@ -13,7 +13,6 @@ use gpui_kit::{App, Context, Window};
 use super::AppView;
 use super::preview::PreviewSource;
 use super::selection::presentation_matches_source;
-use crate::results::ResultsDelegate;
 
 /// Lowest input gain in decibels.
 pub(super) const MINIMUM_GAIN_DB: f32 = -12.0;
@@ -190,21 +189,6 @@ impl AppView {
                 .update(cx, |slider, cx| slider.set_value(target, window, cx));
         }
     }
-}
-
-/// Takes the latest authoritative gain values before the pending rows can be removed.
-/// A nullable gain is an explicit clear, not an absent write.
-pub(super) fn take_pending_gains(
-    delegate: &ResultsDelegate,
-    pending: &mut Vec<PathBuf>,
-) -> Vec<(PathBuf, Option<f32>)> {
-    std::mem::take(pending)
-        .into_iter()
-        .filter_map(|path| {
-            let record = delegate.row_for(&path)?.ready_record()?;
-            record.matches_file_on_disk().then_some((path, record.custom_gain_db))
-        })
-        .collect()
 }
 
 /// Separates audible authority from static display gain when no decoder is loaded.

@@ -14,14 +14,13 @@ use audiobatch_core::file_selection::MAXIMUM_REVEAL_FOLDERS;
 use audiobatch_playback::{Player, PlayerEvent};
 use gpui_kit::{Context, Entity, PathPromptOptions, PromptLevel, SharedString, Task, Window};
 
-use super::gain::{MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB, take_pending_gains};
+use super::gain::{MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB};
 use super::{APP_TITLE, AppView, DEFAULT_GAIN_DB, RunKind};
 use crate::build_info::about_message;
 use crate::controls::{ControlsEvent, SliderControl};
 use crate::demo::{DemoRandom, ROWS_PER_TICK, advance_row, demo_rows, demo_waveform};
 use crate::files::{open_parent_folders, reveal_in_file_manager};
 use crate::playback_status::format_playback_time;
-use crate::results::ResultsDelegate;
 use crate::waveform::{MAXIMUM_ZOOM, MINIMUM_ZOOM, PlayheadSource, WaveformEvent, WaveformView};
 
 /// How often player events are checked.
@@ -49,6 +48,7 @@ impl AppView {
             .is_some_and(|run| run.kind == RunKind::Scan && self.is_analyzing())
         {
             self.status = SharedString::from("Wait for the scan to finish before analyzing again");
+            self.status_sticky = true;
             cx.notify();
             return;
         }
@@ -63,6 +63,8 @@ impl AppView {
         }
         self.remove_paths(&selected, cx);
         self.status = describe_files("Removed", "from the list", &selected).into();
+        self.status_sticky = true;
+        self.sync_action_menus(cx);
         cx.notify();
     }
 
@@ -90,7 +92,18 @@ impl AppView {
         );
         cx.spawn_in(window, async move |this, cx| {
             if answer.await == Ok(0) {
-                let _ = this.update(cx, |view, cx| view.move_to_trash(&selected, cx));
+                let _ = this.update(cx, |view, cx| {
+                    let remaining: Vec<PathBuf> = {
+                        let delegate = view.table.read(cx).delegate();
+                        selected
+                            .into_iter()
+                            .filter(|path| delegate.row_for(path).is_some())
+                            .collect()
+                    };
+                    if !remaining.is_empty() {
+                        view.move_to_trash(&remaining, cx);
+                    }
+                });
             }
         })
         .detach();
@@ -124,6 +137,7 @@ impl AppView {
             Ok(skipped) => folder_limit_status(skipped),
         };
         self.status = status.into();
+        self.status_sticky = true;
         cx.notify();
     }
 
@@ -146,16 +160,16 @@ impl AppView {
         self.run = None;
         self.clear_selection(cx);
         self.artwork_rewrites.clear();
-        let gains = self.table.update(cx, |state, cx| {
-            let gains = clear_result_rows(state.delegate_mut(), &mut self.pending_gain_paths);
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().clear();
             cx.notify();
-            gains
         });
-        debug_assert_eq!(gains, [] as [(PathBuf, Option<f32>); 0]);
         if was_demo {
             self.connect_playhead(cx);
         }
         self.status = SharedString::default();
+        self.status_sticky = false;
+        self.sync_action_menus(cx);
         cx.notify();
     }
 
@@ -180,19 +194,27 @@ impl AppView {
     pub(super) fn toggle_playback(&mut self, cx: &mut Context<Self>) {
         // An explicit play or stop wins over a start that waits for the cue points.
         self.start_after_cues = None;
-        let selected = self.selected.clone();
-        if let Some(player) = &mut self.player {
-            if player.is_playing() {
+        if self.player.as_ref().is_some_and(Player::is_playing) {
+            if let Some(player) = &mut self.player {
                 player.pause();
-            } else {
-                let loaded = player.loaded_path().map(Path::to_path_buf);
-                match (loaded, selected) {
-                    (Some(loaded), Some(selected)) if loaded != selected => player.load(&selected, 0.0, true),
-                    (Some(_), _) => player.play(),
-                    (None, Some(selected)) => player.load(&selected, 0.0, true),
-                    (None, None) => {}
-                }
             }
+            cx.notify();
+            return;
+        }
+        let Some(selected) = self.selected.clone() else {
+            cx.notify();
+            return;
+        };
+        let needs_load = self.player.as_ref().is_some_and(|player| {
+            player.loaded_path() != Some(selected.as_path())
+                || self.preview_source.needs_reload(&selected, player.loaded_path())
+        });
+        if needs_load {
+            self.select_path(&selected, true, cx);
+            return;
+        }
+        if let Some(player) = &mut self.player {
+            player.play();
         }
         cx.notify();
     }
@@ -280,23 +302,8 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         match event {
-            WaveformEvent::SeekAndPlayRequested(seconds) => {
-                self.start_after_cues = None;
-                if let Some(player) = &mut self.player {
-                    let playing = player.is_playing();
-                    player.seek(*seconds);
-                    if !playing {
-                        player.play();
-                    }
-                }
-            }
-            WaveformEvent::RestartRequested => {
-                self.start_after_cues = None;
-                if let Some(player) = &mut self.player {
-                    player.seek(0.0);
-                    player.play();
-                }
-            }
+            WaveformEvent::SeekAndPlayRequested(seconds) => self.seek_and_play_selected(*seconds, cx),
+            WaveformEvent::RestartRequested => self.seek_and_play_selected(0.0, cx),
             WaveformEvent::ZoomBy(factor) => {
                 let current = f64::from(self.zoom_slider.read(cx).value().start());
                 let zoom = (current * factor).clamp(MINIMUM_ZOOM, MAXIMUM_ZOOM);
@@ -363,7 +370,7 @@ impl AppView {
                     if let Some(player) = view.player.as_mut() {
                         player.close_idle_stream();
                     }
-                    let events = view.player.as_ref().map(Player::poll_events).unwrap_or_default();
+                    let events = view.player.as_ref().map_or_default(Player::poll_events);
                     for event in events {
                         if crate::debug_enabled() {
                             tracing::info!("player: {event:?}");
@@ -372,6 +379,7 @@ impl AppView {
                             PlayerEvent::Error { message, .. } => {
                                 view.start_after_cues = None;
                                 view.status = message.into();
+                                view.status_sticky = true;
                             }
                             PlayerEvent::Ended => view.continue_after_end(cx),
                             PlayerEvent::Loaded { .. } => {}
@@ -430,20 +438,18 @@ impl AppView {
     /// and selects the file that took the place of the first removed row.
     fn remove_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
         self.flush_gain_store(cx);
-        self.enrichment.invalidate();
         let first_index = {
             let delegate = self.table.read(cx).delegate();
             paths.iter().filter_map(|path| delegate.index_of(path)).min()
         };
         let removed: HashSet<PathBuf> = paths.iter().cloned().collect();
+        self.enrichment.remove_paths(&removed);
         self.roots.retain(|root| !removed.contains(root));
         self.excluded.extend(removed.iter().cloned());
-        let gains = self.table.update(cx, |state, cx| {
-            let gains = remove_result_rows(state.delegate_mut(), &removed, &mut self.pending_gain_paths);
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().remove_many(&removed);
             cx.notify();
-            gains
         });
-        debug_assert_eq!(gains, [] as [(PathBuf, Option<f32>); 0]);
         self.clear_selection(cx);
         let next = first_index.and_then(|index| {
             let delegate = self.table.read(cx).delegate();
@@ -502,9 +508,11 @@ impl AppView {
         if !trashed.is_empty() {
             self.remove_paths(&trashed, cx);
         }
+        self.status_sticky = first_failure.is_some() || !trashed.is_empty();
         self.status = first_failure
             .unwrap_or_else(|| describe_files("Moved", "to the trash", &trashed))
             .into();
+        self.sync_action_menus(cx);
         cx.notify();
     }
 
@@ -526,6 +534,8 @@ impl AppView {
             cx.notify();
         });
         self.status = SharedString::from("Analysis cancelled");
+        self.status_sticky = true;
+        self.sync_action_menus(cx);
         cx.notify();
     }
 
@@ -548,24 +558,33 @@ impl AppView {
         }
         cx.notify();
     }
-}
 
-/// Removes result rows and returns any delayed gain writes that still have a source row.
-fn remove_result_rows(
-    delegate: &mut ResultsDelegate,
-    removed: &HashSet<PathBuf>,
-    pending: &mut Vec<PathBuf>,
-) -> Vec<(PathBuf, Option<f32>)> {
-    let gains = take_pending_gains(delegate, pending);
-    delegate.remove_many(removed);
-    gains
-}
-
-/// Clears result rows and returns any delayed gain writes that still have a source row.
-fn clear_result_rows(delegate: &mut ResultsDelegate, pending: &mut Vec<PathBuf>) -> Vec<(PathBuf, Option<f32>)> {
-    let gains = take_pending_gains(delegate, pending);
-    delegate.clear();
-    gains
+    /// Seeks the selected file to `seconds` and starts playback, reloading the player and custom gain if unloaded.
+    fn seek_and_play_selected(&mut self, seconds: f64, cx: &mut Context<Self>) {
+        self.start_after_cues = None;
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        let needs_load = self.player.as_ref().is_some_and(|player| {
+            player.loaded_path() != Some(selected.as_path())
+                || self.preview_source.needs_reload(&selected, player.loaded_path())
+        });
+        if needs_load {
+            self.preview_source.begin(&selected);
+            if let Some(player) = &mut self.player {
+                player.set_insert_gain(1.0);
+                player.load(&selected, seconds, true);
+            }
+            self.refresh_selected_waveform(cx);
+            self.apply_preview_gain(cx);
+        } else if let Some(player) = &mut self.player {
+            let playing = player.is_playing();
+            player.seek(seconds);
+            if !playing {
+                player.play();
+            }
+        }
+    }
 }
 
 /// Returns the file name of a path for status messages.
@@ -593,12 +612,11 @@ fn folder_limit_status(skipped: usize) -> String {
 
 #[cfg(test)]
 mod test_pending_gain_removal {
-    use std::io::Write as _;
-
     use audiobatch_core::record::{file_identity, same_custom_gain};
     use audiobatch_core::{AnalysisRecord, AnalysisStatus};
 
     use super::*;
+    use crate::results::ResultsDelegate;
 
     /// Lists a ready source with metadata bound to its actual temporary file.
     fn delegate_for(path: &Path) -> ResultsDelegate {
@@ -622,14 +640,12 @@ mod test_pending_gain_removal {
         let file = tempfile::NamedTempFile::new().expect("source");
         let mut delegate = delegate_for(file.path());
         delegate.set_custom_gain(file.path(), Some(-3.0));
-        let mut pending = vec![file.path().to_path_buf()];
-        let removed = pending.iter().cloned().collect();
-        let writes = remove_result_rows(&mut delegate, &removed, &mut pending);
-        assert_eq!(writes.len(), 1);
-        assert_eq!(writes[0].0, file.path());
-        assert!(same_custom_gain(writes[0].1, Some(-3.0)));
+        let write = delegate.take_gain_write(file.path()).expect("pending gain write");
+        let removed: HashSet<PathBuf> = std::iter::once(file.path().to_path_buf()).collect();
+        delegate.remove_many(&removed);
+        assert_eq!(write.path(), file.path());
+        assert!(same_custom_gain(write.custom_gain_db(), Some(-3.0)));
         assert!(delegate.row_for(file.path()).is_none());
-        assert_eq!(pending, [] as [std::path::PathBuf; 0]);
     }
 
     #[test]
@@ -646,45 +662,28 @@ mod test_pending_gain_removal {
         delegate.set_record(second_record);
         delegate.set_custom_gain(first.path(), Some(-3.0));
         delegate.set_custom_gain(second.path(), Some(2.0));
-        let mut pending = vec![first.path().to_path_buf(), second.path().to_path_buf()];
         delegate.set_custom_gain(first.path(), None);
         delegate.set_custom_gain(second.path(), Some(4.0));
-        let writes = clear_result_rows(&mut delegate, &mut pending);
-        assert_eq!(writes.len(), 2);
-        assert_eq!(writes[0], (first.path().to_path_buf(), None));
-        assert!(same_custom_gain(writes[1].1, Some(4.0)));
+        let first_write = delegate.take_gain_write(first.path()).expect("explicit clear");
+        let second_write = delegate.take_gain_write(second.path()).expect("latest gain");
+        assert!(delegate.take_gain_write(first.path()).is_none());
+        delegate.clear();
+        assert_eq!(first_write.path(), first.path());
+        assert_eq!(first_write.custom_gain_db(), None);
+        assert_eq!(second_write.path(), second.path());
+        assert!(same_custom_gain(second_write.custom_gain_db(), Some(4.0)));
         assert_eq!(delegate.len(), 0);
-        assert_eq!(pending, [] as [std::path::PathBuf; 0]);
-        assert_eq!(
-            take_pending_gains(&delegate, &mut pending),
-            [] as [(std::path::PathBuf, std::option::Option<f32>); 0]
-        );
     }
 
     #[test]
-    fn pending_gain_never_writes_a_changed_or_missing_source() {
-        let mut file = tempfile::NamedTempFile::new().expect("source");
-        let mut delegate = delegate_for(file.path());
-        delegate.set_custom_gain(file.path(), Some(-3.0));
-        let mut pending = vec![file.path().to_path_buf(), PathBuf::from("/missing.wav")];
-        file.write_all(b"new source identity").expect("replacement bytes");
-        assert_eq!(
-            take_pending_gains(&delegate, &mut pending),
-            [] as [(std::path::PathBuf, std::option::Option<f32>); 0]
-        );
-        assert_eq!(pending, [] as [std::path::PathBuf; 0]);
-    }
-
-    #[test]
-    fn removing_another_row_still_flushes_the_pending_clear() {
+    fn removing_another_row_still_keeps_pending_clear_consumable() {
         let file = tempfile::NamedTempFile::new().expect("source");
         let mut delegate = delegate_for(file.path());
         delegate.set_custom_gain(file.path(), None);
-        let mut pending = vec![file.path().to_path_buf()];
-        assert_eq!(
-            remove_result_rows(&mut delegate, &HashSet::new(), &mut pending),
-            [(file.path().to_path_buf(), None)]
-        );
+        let write = delegate.take_gain_write(file.path()).expect("explicit clear");
+        delegate.remove_many(&HashSet::new());
+        assert_eq!(write.path(), file.path());
+        assert_eq!(write.custom_gain_db(), None);
         assert!(delegate.row_for(file.path()).is_some());
     }
 }

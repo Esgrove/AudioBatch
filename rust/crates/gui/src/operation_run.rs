@@ -39,6 +39,7 @@ pub struct OperationRun {
     /// True once the run was cancelled.
     /// Outputs committed after that are still applied, since their sources were already replaced.
     pub cancelled: bool,
+    /// Wall-clock start time used to log elapsed duration on completion.
     started: Instant,
 }
 
@@ -219,7 +220,7 @@ mod test_run {
     fn clear_keeps_the_receiver_until_a_gated_writer_disconnects() {
         let directory = tempfile::tempdir().expect("directory");
         let source = directory.path().join("song.wav");
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures/sine_stereo_44100_16.wav");
+        let fixture = test_fixtures::fixture("sine_stereo_44100_16.wav");
         fs::copy(fixture, &source).expect("fixture copy");
         let record = analyze_file(&source, &|| false, &mut |_| {});
         let cache = Arc::new(audiobatch_core::AnalysisCache::with_path(

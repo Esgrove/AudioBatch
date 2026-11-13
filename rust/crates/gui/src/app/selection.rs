@@ -79,6 +79,12 @@ impl AppView {
             cx.notify();
             return;
         }
+        if matches!(event, TableEvent::MoveColumn(_, _)) {
+            self.menu_state.columns = column_choices(table.read(cx).delegate());
+            self.refresh_menus(cx);
+            cx.notify();
+            return;
+        }
         if let TableEvent::RightClickedRow(Some(index)) = event {
             self.select_right_clicked_row(*index, cx);
             return;
@@ -169,6 +175,28 @@ impl AppView {
             .selected_paths()
             .iter()
             .filter_map(|path| delegate.row_for(path).and_then(|row| row.ready_record()).cloned())
+            .collect()
+    }
+
+    /// Returns all selected records when every selected row is ready, enforcing all-or-nothing normalization.
+    pub(super) fn selected_normalizable_records(&self, cx: &App) -> Option<Vec<AnalysisRecord>> {
+        let delegate = self.table.read(cx).delegate();
+        let selected = delegate.selected_paths();
+        if selected.is_empty() {
+            return None;
+        }
+        let mut records = Vec::with_capacity(selected.len());
+        for path in &selected {
+            records.push(delegate.row_for(path)?.ready_record()?.clone());
+        }
+        Some(records)
+    }
+
+    /// Returns the selected ready records whose channel counts are supported by plugin chains (mono or stereo).
+    pub(super) fn selected_processable_records(&self, cx: &App) -> Vec<AnalysisRecord> {
+        self.selected_ready_records(cx)
+            .into_iter()
+            .filter(|record| (1..=2).contains(&record.channels))
             .collect()
     }
 
@@ -279,6 +307,7 @@ impl AppView {
         self.apply_preview_gain(cx);
         self.request_selected_enrichment(cx);
         self.update_gain_prediction(cx);
+        self.sync_action_menus(cx);
         cx.notify();
     }
 
@@ -306,6 +335,7 @@ impl AppView {
         self.clear_tag_marks(cx);
         self.waveform
             .update(cx, |waveform, cx| waveform.show_placeholder(NO_FILE_TEXT, cx));
+        self.sync_action_menus(cx);
     }
 
     /// Shows a waveform and source warnings only for the captured decoder version or a current static source.
@@ -396,7 +426,8 @@ pub(super) fn presentation_matches_source(
 
 /// Returns the columns of the Columns submenu, checked while they show.
 pub(super) fn column_choices(delegate: &ResultsDelegate) -> Vec<ColumnChoice> {
-    ResultsDelegate::column_choices()
+    delegate
+        .ordered_column_choices()
         .map(|(key, title)| ColumnChoice {
             id: ResultsDelegate::column_identifier(key).into(),
             title,

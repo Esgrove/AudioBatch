@@ -45,6 +45,7 @@ mod theme;
 mod waveform;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use audiobatch_core::log_file;
 use audiobatch_plugins::{is_scan_worker_invocation, run_scan_worker};
@@ -69,6 +70,18 @@ const DISPLAY_MARGIN: f32 = 40.0;
 /// Smallest window size.
 const MINIMUM_WINDOW_SIZE: (f32, f32) = (800.0, 600.0);
 
+/// Usage summary printed for `-h`/`--help` and invalid launch flags.
+const USAGE_LINE: &str = "Usage: AudioBatchRs [--version] [--autoplay] [--demo-rows <count>] [paths...]";
+
+/// Result of parsing GUI command-line arguments.
+#[derive(Debug, PartialEq, Eq)]
+enum ParsedArguments {
+    /// Print usage and exit cleanly.
+    Help,
+    /// Launch the application with the parsed options.
+    Launch(LaunchOptions),
+}
+
 /// Returns true when `AUDIOBATCH_GUI_DEBUG` is set.
 /// The app then adds the waveform frame rate and player events to the log.
 #[must_use]
@@ -78,26 +91,30 @@ pub fn debug_enabled() -> bool {
 
 /// Runs the plugin scan worker when started as one.
 /// Otherwise parses the launch options and opens the main window, quitting when it closes.
-fn main() {
+fn main() -> ExitCode {
     if is_scan_worker_invocation(std::env::args_os()) {
-        std::process::exit(run_scan_worker());
+        return ExitCode::from(u8::try_from(run_scan_worker()).unwrap_or(1));
     }
     // Checked before logging and the single instance handoff, so it never reaches a running app.
     if is_version_request(std::env::args().skip(1)) {
         println!("{}", build_info::VERSION_STRING);
-        return;
+        return ExitCode::SUCCESS;
     }
     let options = match parse_arguments(std::env::args().skip(1)) {
-        Ok(options) => options,
+        Ok(ParsedArguments::Help) => {
+            println!("{USAGE_LINE}");
+            return ExitCode::SUCCESS;
+        }
+        Ok(ParsedArguments::Launch(options)) => options,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("Usage: AudioBatchRs [--version] [--autoplay] [--demo-rows <count>] [paths...]");
-            return;
+            eprintln!("{USAGE_LINE}");
+            return ExitCode::from(1);
         }
     };
     if let Err(error) = audiobatch_core::storage::StoragePaths::from_environment() {
         eprintln!("{error}");
-        std::process::exit(2);
+        return ExitCode::from(1);
     }
     // Logging also writes each message to stderr when it is available.
     if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::TRACE) {
@@ -110,7 +127,7 @@ fn main() {
         None
     } else {
         match single_instance::claim(&options.paths) {
-            single_instance::Claim::Forwarded => return,
+            single_instance::Claim::Forwarded => return ExitCode::SUCCESS,
             single_instance::Claim::Primary(launches) => Some(launches),
         }
     };
@@ -178,6 +195,7 @@ fn main() {
             cx.activate(true);
         });
     tracing::info!("Quit");
+    ExitCode::SUCCESS
 }
 
 /// Registers the main thread as the plugin UI thread,
@@ -226,10 +244,10 @@ fn is_version_request(mut arguments: impl Iterator<Item = String>) -> bool {
     arguments.any(|argument| argument == "--version" || argument == "-V")
 }
 
-/// Parses the command line into launch options.
+/// Parses the command line into launch options or a help request.
 ///
 /// The process serial number argument that macOS can pass to an app launched from the Finder is skipped.
-fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<LaunchOptions, String> {
+fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<ParsedArguments, String> {
     let mut options = LaunchOptions::default();
     let mut arguments = arguments;
     while let Some(argument) = arguments.next() {
@@ -243,21 +261,24 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<LaunchOpti
                 options.demo_rows = Some(rows);
             }
             "--autoplay" => options.autoplay = true,
-            "-h" | "--help" => return Err(String::from("AudioBatchRs")),
+            "-h" | "--help" => return Ok(ParsedArguments::Help),
             other if other.starts_with('-') => return Err(format!("Unknown option: {other}")),
             path => options.paths.push(PathBuf::from(path)),
         }
     }
-    Ok(options)
+    Ok(ParsedArguments::Launch(options))
 }
 
 #[cfg(test)]
 mod test_parse_arguments {
     use super::*;
 
-    /// Parses the launch arguments after the program name.
+    /// Parses launch arguments into `LaunchOptions`, panicking if help was requested.
     fn parse(arguments: &[&str]) -> Result<LaunchOptions, String> {
-        parse_arguments(arguments.iter().map(ToString::to_string))
+        match parse_arguments(arguments.iter().map(ToString::to_string))? {
+            ParsedArguments::Launch(options) => Ok(options),
+            ParsedArguments::Help => Err(String::from("unexpected help")),
+        }
     }
 
     #[test]
@@ -295,6 +316,10 @@ mod test_parse_arguments {
         assert_eq!(
             parse(&["--verbose"]).err().as_deref(),
             Some("Unknown option: --verbose")
+        );
+        assert_eq!(
+            parse_arguments(["--help".to_string()].into_iter()),
+            Ok(ParsedArguments::Help)
         );
     }
 }

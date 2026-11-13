@@ -10,7 +10,8 @@
 //! Results replace rows the same way normalization results do, and the run can be cancelled,
 //! which leaves the files in progress with their originals.
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use audiobatch_core::AnalysisRecord;
@@ -44,10 +45,9 @@ impl AppView {
         self.process_task.is_some() && self.process_run.as_ref().is_some_and(|run| !run.completed)
     }
 
-    /// Returns true when the selected file can be processed now.
-    /// It runs on every render, so it leaves checking that the file still exists to `process_selected`.
+    /// Returns true when the selected files include at least one analyzed mono or stereo file.
     pub(super) fn can_process_selected(&self, cx: &Context<Self>) -> bool {
-        self.can_start_processing() && self.selected_record(cx).is_some()
+        self.can_start_processing() && !self.selected_processable_records(cx).is_empty()
     }
 
     /// Returns true when plugin processing could start now, with an enabled plugin, whatever is selected.
@@ -58,23 +58,25 @@ impl AppView {
             && self.plugins.chain.enabled_count() > 0
     }
 
-    /// Processes the selected file with the plugin chain.
+    /// Processes the selected mono and stereo files with the plugin chain.
     pub(super) fn process_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let records = self.selected_ready_records(cx);
+        let records = self.selected_processable_records(cx);
         if records.is_empty() {
             self.status = SharedString::from("Select an analyzed file to process");
+            self.status_sticky = true;
             cx.notify();
             return;
         }
         if records.iter().any(|record| !record.path.is_file()) {
             self.status = SharedString::from("A selected file no longer exists");
+            self.status_sticky = true;
             cx.notify();
             return;
         }
         self.start_processing(records, window, cx);
     }
 
-    /// Asks for confirmation, then processes every analyzed file in the list with the plugin chain.
+    /// Asks for confirmation, then processes every analyzed mono or stereo file in the list with the plugin chain.
     pub(super) fn process_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.report_blocked_processing(cx) {
             return;
@@ -83,11 +85,12 @@ impl AppView {
             let delegate = self.table.read(cx).delegate();
             (0..delegate.len())
                 .filter_map(|index| delegate.row(index).and_then(|row| row.ready_record()).cloned())
-                .filter(|record| record.path.is_file())
+                .filter(|record| (1..=2).contains(&record.channels) && record.path.is_file())
                 .collect()
         };
         if records.is_empty() {
             self.status = SharedString::from("No analyzed files to process");
+            self.status_sticky = true;
             cx.notify();
             return;
         }
@@ -98,16 +101,30 @@ impl AppView {
             records.len(),
             self.chain_summary()
         );
+        let confirmed_paths: HashSet<PathBuf> = records.iter().map(|record| record.path.clone()).collect();
         let answer = window.prompt(
             PromptLevel::Warning,
-            OperationKind::Process.dialog_title(),
+            "Process All Files",
             Some(&detail),
             &["Process", "Cancel"],
             cx,
         );
         cx.spawn_in(window, async move |this, cx| {
             if answer.await == Ok(0) {
-                let _ = this.update_in(cx, |view, window, cx| view.start_processing(records, window, cx));
+                let _ = this.update_in(cx, |view, window, cx| {
+                    let current: Vec<AnalysisRecord> = {
+                        let delegate = view.table.read(cx).delegate();
+                        (0..delegate.len())
+                            .filter_map(|index| delegate.row(index).and_then(|row| row.ready_record()).cloned())
+                            .filter(|record| {
+                                confirmed_paths.contains(&record.path)
+                                    && (1..=2).contains(&record.channels)
+                                    && record.path.is_file()
+                            })
+                            .collect()
+                    };
+                    view.start_processing(current, window, cx);
+                });
             }
         })
         .detach();
@@ -259,8 +276,10 @@ impl AppView {
             coordinator.start(records, options, chains);
         let run = OperationRun::new(OperationKind::Process, run_id, total);
         self.status = run.progress_text().into();
+        self.status_sticky = false;
         self.process_run = Some(run);
         self.process_task = Some(spawn_process_drain(receiver, window, cx));
+        self.sync_action_menus(cx);
         cx.notify();
     }
 
@@ -315,6 +334,7 @@ impl AppView {
         if completed && let Some(run) = self.process_run.clone() {
             self.finish_operation_run(&run, window, cx);
         }
+        self.sync_action_menus(cx);
         cx.notify();
     }
 

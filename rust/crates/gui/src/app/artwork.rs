@@ -149,11 +149,7 @@ impl AppView {
     pub(super) fn selected_artwork(&self) -> Option<Arc<RenderImage>> {
         self.selected_artwork
             .as_ref()
-            .filter(|(identity, _)| {
-                self.settings.show_album_artwork
-                    && self.selected.as_ref() == Some(&identity.path)
-                    && identity.matches_disk()
-            })
+            .filter(|(identity, _)| self.settings.show_album_artwork && self.selected.as_ref() == Some(&identity.path))
             .map(|(_, image)| Arc::clone(image))
     }
 

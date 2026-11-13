@@ -359,6 +359,9 @@ impl AppView {
             }
         };
         self.menu_state.output_device = self.player.as_ref().map(|player| player.device_name().to_string());
+        if !cfg!(test) {
+            self.menu_state.output_devices = Player::output_device_names();
+        }
         self.connect_playhead(cx);
         result
     }

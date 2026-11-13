@@ -161,6 +161,41 @@ impl EnrichmentQueue {
         self.tags.clear();
     }
 
+    /// Removes only the discarded paths from enrichment state, keeping completed work for remaining rows.
+    pub(super) fn remove_paths(&mut self, removed: &HashSet<PathBuf>) {
+        if let Some(active) = &self.active
+            && removed.contains(&active.identity.path)
+        {
+            active.cancelled.store(true, Ordering::Release);
+        }
+        if self
+            .selected_attempt
+            .as_ref()
+            .is_some_and(|identity| removed.contains(&identity.path))
+        {
+            self.selected_attempt = None;
+        }
+        if self
+            .selected_cache_attempt
+            .as_ref()
+            .is_some_and(|identity| removed.contains(&identity.path))
+        {
+            self.selected_cache_attempt = None;
+        }
+        if self
+            .selected_audio_attempt
+            .as_ref()
+            .is_some_and(|attempt| removed.contains(&attempt.identity.path))
+        {
+            self.selected_audio_attempt = None;
+        }
+        self.pending.retain(|identity| !removed.contains(&identity.path));
+        self.queued.retain(|identity| !removed.contains(&identity.path));
+        self.completed.retain(|identity| !removed.contains(&identity.path));
+        self.candidates.retain(|identity| !removed.contains(&identity.path));
+        self.tags.retain(|(identity, _)| !removed.contains(&identity.path));
+    }
+
     /// Queues a source once, promoting the selected identity and cooperatively interrupting unselected work.
     fn enqueue(&mut self, identity: EnrichmentIdentity, selected: bool) {
         self.candidates.insert(identity.clone());

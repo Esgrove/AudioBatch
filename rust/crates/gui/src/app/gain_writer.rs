@@ -45,6 +45,18 @@ impl GainWrite {
             },
         }
     }
+
+    /// Returns the target source path of the captured write.
+    #[cfg(test)]
+    pub fn path(&self) -> &std::path::Path {
+        &self.record.path
+    }
+
+    /// Returns the explicit custom gain or clear captured for persistence.
+    #[cfg(test)]
+    pub const fn custom_gain_db(&self) -> Option<f32> {
+        self.record.custom_gain_db
+    }
 }
 
 impl GainWriter {

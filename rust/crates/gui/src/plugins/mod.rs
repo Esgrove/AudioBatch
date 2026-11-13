@@ -175,8 +175,7 @@ impl PluginHost {
     pub fn preset_names(&self) -> Vec<String> {
         self.presets
             .list()
-            .map(|presets| presets.into_iter().map(|preset| preset.name).collect())
-            .unwrap_or_default()
+            .map_or_default(|presets| presets.into_iter().map(|preset| preset.name).collect())
     }
 
     /// Asks the scan in progress to stop at the next bundle.
@@ -193,8 +192,7 @@ impl ScanStatus {
     pub fn bundle_name(&self) -> String {
         self.bundle
             .file_stem()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .map_or_default(|name| name.to_string_lossy().into_owned())
     }
 
     /// Returns the status bar text, for example "Scanning for plugins (10/86): Soothe2",

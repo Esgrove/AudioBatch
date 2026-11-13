@@ -6,7 +6,6 @@
 //! Shortcuts use Command on macOS and Control on Windows.
 //! The app view handles most actions, so they work from the menu bar and the shortcuts alike.
 
-use audiobatch_playback::Player;
 #[cfg(target_os = "windows")]
 use gpui_kit::base::GlobalState;
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, SharedString, SystemMenuType};
@@ -303,6 +302,8 @@ pub struct AddPluginToChain {
 pub struct MenuState {
     /// Name of the output device in use.
     pub output_device: Option<String>,
+    /// Cached output device names for the Options > Output Device submenu.
+    pub output_devices: Vec<String>,
     /// Source visualization and arrangement shown in the preview.
     pub preview_view_mode: PreviewViewMode,
     /// True when source sample-peak overload indicators are shown.
@@ -337,6 +338,22 @@ pub struct MenuState {
     pub plugin_groups: Vec<VendorGroup>,
     /// True while a plugin scan is running, disabling duplicate scan commands.
     pub scanning_plugins: bool,
+    /// True while a normalization or plugin processing pass blocks folder/list edits.
+    pub file_operation_active: bool,
+    /// True when at least one row is selected in the table.
+    pub has_selection: bool,
+    /// True when selected rows can be normalized now.
+    pub can_normalize_selected: bool,
+    /// True when at least one analyzed row can be normalized now.
+    pub can_normalize_all: bool,
+    /// True when selected rows can be processed with the plugin chain now.
+    pub can_process_selected: bool,
+    /// True when at least one analyzed mono/stereo row can be processed now.
+    pub can_process_all: bool,
+    /// True when the plugin chain contains at least one slot.
+    pub has_chain_slots: bool,
+    /// True when an analysis, normalization, or plugin processing run can be cancelled.
+    pub can_cancel: bool,
     /// Names of the saved chain presets, for the Chain Presets submenu.
     pub presets: Vec<String>,
     /// Name of the preset the chain matches, which the submenu checks.
@@ -400,6 +417,16 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("backspace", RemoveSelected, outside_text),
         KeyBinding::new(primary!("backspace"), TrashSelected, outside_text),
         KeyBinding::new(primary!("shift-backspace"), TrashSelectedNow, outside_text),
+        #[cfg(target_os = "windows")]
+        KeyBinding::new("ctrl-delete", TrashSelected, outside_text),
+        #[cfg(target_os = "windows")]
+        KeyBinding::new("ctrl-shift-delete", TrashSelectedNow, outside_text),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("ctrl-i", About, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("ctrl-backspace", TrashSelected, outside_text),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("ctrl-shift-backspace", TrashSelectedNow, outside_text),
         KeyBinding::new("space", TogglePlayback, outside_text),
         KeyBinding::new("escape", StopPlayback, outside_text),
         KeyBinding::new(primary!("p"), OpenAudioSettings, context),
@@ -447,29 +474,34 @@ pub fn set_menus(cx: &mut App, state: &MenuState) {
 /// Builds the File menu, which ends with Quit outside macOS.
 fn file_menu(state: &MenuState) -> Menu {
     let mut file_items = vec![
-        MenuItem::action("Choose Folder…", ChooseFolder),
-        MenuItem::action("Add Folder…", AddFolder),
-        MenuItem::action("Add Files…", AddFiles),
-        MenuItem::action("Rescan", Rescan),
+        MenuItem::action("Choose Folder…", ChooseFolder).disabled(state.file_operation_active),
+        MenuItem::action("Add Folder…", AddFolder).disabled(state.file_operation_active),
+        MenuItem::action("Add Files…", AddFiles).disabled(state.file_operation_active),
+        MenuItem::action("Rescan", Rescan).disabled(state.file_operation_active),
         MenuItem::separator(),
-        MenuItem::action(REVEAL_LABEL, RevealSelected),
-        MenuItem::action(OPEN_PARENT_FOLDER_LABEL, OpenParentFolder),
-        MenuItem::action("Re-analyze Selected", ReanalyzeSelected),
+        MenuItem::action(REVEAL_LABEL, RevealSelected).disabled(!state.has_selection),
+        MenuItem::action("Re-analyze Selected", ReanalyzeSelected)
+            .disabled(!state.has_selection || state.file_operation_active),
         MenuItem::action(
             format!("Normalize Selected to {}", state.normalize_target),
             NormalizeSelected,
-        ),
+        )
+        .disabled(!state.can_normalize_selected),
         MenuItem::action(
             format!("Normalize All Files to {}…", state.normalize_target),
             NormalizeAll,
-        ),
-        MenuItem::action("Clear Per-file Gain", ClearCustomGain),
+        )
+        .disabled(!state.can_normalize_all),
+        MenuItem::action(OPEN_PARENT_FOLDER_LABEL, OpenParentFolder).disabled(!state.has_selection),
+        MenuItem::action("Clear Per-file Gain", ClearCustomGain).disabled(!state.has_selection),
         MenuItem::action("Select All Files", SelectAll),
-        MenuItem::action("Remove Selected from List", RemoveSelected),
-        MenuItem::action("Move Selected to Trash", TrashSelected),
+        MenuItem::action("Remove Selected from List", RemoveSelected)
+            .disabled(!state.has_selection || state.file_operation_active),
+        MenuItem::action("Move Selected to Trash", TrashSelected)
+            .disabled(!state.has_selection || state.file_operation_active),
         MenuItem::action("Clear All Files", ClearList),
         MenuItem::separator(),
-        MenuItem::action("Cancel Run", CancelRun),
+        MenuItem::action("Cancel Run", CancelRun).disabled(!state.can_cancel),
     ];
     if !cfg!(target_os = "macos") {
         file_items.push(MenuItem::separator());
@@ -480,20 +512,29 @@ fn file_menu(state: &MenuState) -> Menu {
 
 /// Builds the Options menu with check marks on the preview options and the current output device.
 fn options_menu(state: &MenuState) -> Menu {
-    // Nonvisual tests must not initialize audio drivers, including during menu refreshes.
-    let devices = if cfg!(test) {
-        Vec::new()
-    } else {
-        Player::output_device_names()
-    };
-    let devices = devices
-        .into_iter()
+    let devices = state
+        .output_devices
+        .iter()
         .map(|name| {
             let checked = state.output_device.as_deref() == Some(name.as_str());
-            MenuItem::action(name.clone(), SelectOutputDevice { name: name.into() }).checked(checked)
+            MenuItem::action(
+                name.clone(),
+                SelectOutputDevice {
+                    name: name.clone().into(),
+                },
+            )
+            .checked(checked)
         })
         .collect::<Vec<_>>();
     Menu::new("Options").items([
+        MenuItem::action(
+            if state.preview_compact {
+                "Expand Bottom Section"
+            } else {
+                "Collapse Bottom Section"
+            },
+            TogglePreviewSection,
+        ),
         MenuItem::submenu(Menu::new("Preview view").items(PreviewViewMode::ALL.map(|mode| {
             MenuItem::action(mode.label(), SetPreviewViewMode { mode }).checked(state.preview_view_mode == mode)
         }))),
@@ -510,14 +551,6 @@ fn options_menu(state: &MenuState) -> Menu {
         MenuItem::submenu(Menu::new("Columns").items(state.columns.iter().map(|column| {
             MenuItem::action(column.title, ToggleColumn { id: column.id.clone() }).checked(column.visible)
         }))),
-        MenuItem::action(
-            if state.preview_compact {
-                "Expand Bottom Section"
-            } else {
-                "Collapse Bottom Section"
-            },
-            TogglePreviewSection,
-        ),
         MenuItem::separator(),
         MenuItem::action("Preview Plugin Chain", TogglePluginPreview).checked(state.preview_plugin_chain),
         MenuItem::action("Compensate Preview Plugin Latency", TogglePreviewLatencyCompensation)
@@ -579,19 +612,24 @@ fn plugins_menu(state: &MenuState) -> Menu {
     let add_plugin = Menu::new("Add Plugin")
         .items(vendors)
         .disabled(state.plugin_groups.is_empty());
+    let chain_heading = if state.chain_summary.is_empty() || state.chain_summary == "Empty" {
+        String::from("No plugins in chain")
+    } else {
+        format!("Chain: {}", state.chain_summary)
+    };
     Menu::new("Plugins").items([
-        MenuItem::action(format!("Chain: {}", state.chain_summary), OpenPluginChain).disabled(true),
+        MenuItem::action(chain_heading, OpenPluginChain).disabled(true),
         MenuItem::separator(),
         MenuItem::action("Edit Chain…", OpenPluginChain),
         MenuItem::submenu(add_plugin),
         MenuItem::submenu(presets_menu(state)),
-        MenuItem::action("Clear Chain", ClearPluginChain),
+        MenuItem::action("Clear Chain", ClearPluginChain).disabled(!state.has_chain_slots),
         MenuItem::separator(),
         MenuItem::action("Plugin Manager…", OpenPluginManager),
         MenuItem::action("Rescan VST3 and CLAP plugins", RescanPlugins).disabled(state.scanning_plugins),
         MenuItem::separator(),
-        MenuItem::action("Process Selected With Plugin Chain", ProcessSelected),
-        MenuItem::action("Process All Files With Plugin Chain", ProcessAll),
+        MenuItem::action("Process Selected With Plugin Chain", ProcessSelected).disabled(!state.can_process_selected),
+        MenuItem::action("Process All Files With Plugin Chain…", ProcessAll).disabled(!state.can_process_all),
     ])
 }
 
