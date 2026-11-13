@@ -53,6 +53,10 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   runs ruff on the Python scripts through uv,
   and formats tracked and non-ignored new JSON files with jq using two-space indentation.
   `lint.sh --check` reports warnings without applying fixes.
+- `package-macos.sh` builds non-relocatable Apple Silicon `.pkg` installers (`arm64`, macOS 15+, `apple-m1` baseline)
+  into `dist/macos/` through `cpp/package-macos.sh`, `rust/package-macos.sh`, and `image-control-plugin/package-macos.sh`.
+  Each installer exposes customizable App/CLI or VST3/Audio Unit choices,
+  with optional Developer ID `--sign` and `--notarize` modes, while local `build.sh` and `install.sh` remain `native`.
 - `bump-version.sh` bumps the versions of the C++ application, the Rust workspace, and the test plugin together,
   a patch by default, or `--major` or `--minor`.
   `--commit` commits only the version files and adds an annotated `vX.Y.Z` tag.

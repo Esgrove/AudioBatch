@@ -208,6 +208,11 @@ See `./build.sh --help` and `./install.sh --help` for other options.
 The installer builds and copies the VST3 to `~/Library/Audio/Plug-Ins/VST3` on macOS
 or `C:\Program Files\Common Files\VST3` on Windows, requesting elevation if needed.
 On macOS it also installs the Audio Unit to `~/Library/Audio/Plug-Ins/Components` and refreshes its registry.
+Pass `--notarize` on macOS to Developer ID sign, notarize, and staple both local bundles before installation.
+For distribution on macOS, `./package-macos.sh` builds `../dist/macos/ImageControl-<version>.pkg` for Apple Silicon
+(`apple-m1`, macOS 15+) with interactive Installer Customize checkboxes for `ImageControl VST3`
+(`/Library/Audio/Plug-Ins/VST3`) and `ImageControl Audio Unit` (`/Library/Audio/Plug-Ins/Components`),
+plus optional `--sign` and `--notarize`.
 `./build.sh --validate` validates the built VST3 with pluginval, without installing the plugin.
 `./install.sh --validate` validates the installed VST3 and, on macOS, the registered Audio Unit with auval.
 Both use pluginval from `PATH` when available.

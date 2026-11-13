@@ -146,15 +146,21 @@ The meter still requires AVX2 on x86 or NEON on Apple Silicon, so clearing nativ
 cargo build --release
 ```
 
-### Local macOS signing
+### macOS signing, notarization, and `.pkg` installer
 
-`build.sh` and `install.sh` sign the finished `AudioBatchRs.app` with `sign_mac_app_bundle` from the root `common.sh`,
+`build.sh` and `install.sh` sign the finished `AudioBatchRs.app` with `sign_mac_app_bundle`
+and the standalone `audiobatch-rs` CLI with `sign_mac_cli_binary` from the root `common.sh`,
 shared with the C++ build.
 `CODESIGN_IDENTITY` selects an installed identity, and an unset or empty value signs ad hoc.
 An invalid identity fails the build.
 The signature uses the hardened runtime,
-and the shared [`macos.entitlements`](../assets/macos.entitlements) only disables library validation,
-so third-party plugins load. The signature is for local use, without notarization.
+and the shared [`macos.entitlements`](../assets/macos.entitlements) relaxes library validation
+and unsigned executable memory so third-party plugins load in-process.
+Pass `--notarize` to `install.sh` or `./package-macos.sh` with `APPLE_TEAM_ID`, `CODESIGN_IDENTITY`,
+`INSTALLER_SIGN_IDENTITY`, and `APPLE_NOTARY_PROFILE` configured to notarize and staple with Apple's notary service.
+`./package-macos.sh` builds a non-relocatable Apple Silicon (`apple-m1`, macOS 15+)
+installer in `../dist/macos/AudioBatchRs-<version>.pkg` with customizable Application
+(`/Applications`) and CLI (`/usr/local/bin`, zsh completions, and license notices) choices.
 
 ```shell
 codesign --verify --deep --strict --verbose=2 AudioBatchRs.app

@@ -549,6 +549,82 @@ notarize_mac_artifact() {
     print_green "Notarized: $artifact"
 }
 
+# Validate an Apple Silicon target CPU name for macOS distribution builds.
+# Pass "true" as the second argument when validating for rustc as well as Apple Clang.
+validate_mac_target_cpu() {
+    local target_cpu="$1"
+    local check_rustc="${2:-false}"
+    case "$target_cpu" in
+        apple-m1 | apple-m2 | apple-m3 | apple-m4 | apple-m5 | apple-m6 | native) ;;
+        *)
+            print_error_and_exit "Unsupported --target-cpu '$target_cpu'. Expected apple-m1..apple-m6 or native."
+            ;;
+    esac
+    if [ "$check_rustc" = true ] && [ "$target_cpu" != "native" ] && command -v rustc > /dev/null 2>&1; then
+        if rustc --target aarch64-apple-darwin --print cfg -C "target-cpu=$target_cpu" 2>&1 | grep -Fq "not a recognized processor"; then
+            print_error_and_exit "Installed rustc does not support --target-cpu '$target_cpu' yet (apple-m1 is recommended)."
+        fi
+    fi
+}
+
+# Build a non-relocatable macOS component .pkg for a staged root containing one bundle (.app, .vst3, or .component).
+# Disabling BundleIsRelocatable prevents macOS Installer from redirecting installs into a developer's build folder.
+build_mac_bundle_component_pkg() {
+    local component_root="$1"
+    local identifier="$2"
+    local version="$3"
+    local output_pkg="$4"
+    local scripts_dir="${5:-}"
+    local component_plist="${output_pkg%.pkg}-component.plist"
+
+    pkgbuild --analyze --root "$component_root" "$component_plist" > /dev/null
+    plutil -replace 0.BundleIsRelocatable -bool false "$component_plist"
+    plutil -replace 0.BundleIsVersionChecked -bool false "$component_plist"
+    plutil -lint -s "$component_plist"
+
+    local pkg_args=(
+        --root "$component_root"
+        --component-plist "$component_plist"
+        --identifier "$identifier"
+        --version "$version"
+        --install-location /
+    )
+    if [ -n "$scripts_dir" ]; then
+        pkg_args+=(--scripts "$scripts_dir")
+    fi
+    pkgbuild "${pkg_args[@]}" "$output_pkg" > /dev/null
+}
+
+# Assemble, optionally sign with Developer ID Installer, and optionally notarize + staple a productbuild .pkg archive.
+finalize_mac_distribution_pkg() {
+    local distribution_xml="$1"
+    local resources_dir="$2"
+    local packages_dir="$3"
+    local output_pkg="$4"
+    local sign_pkg="$5"
+    local notarize_pkg="$6"
+
+    mkdir -p "$(dirname "$output_pkg")"
+    rm -f "$output_pkg"
+
+    local product_args=(
+        --distribution "$distribution_xml"
+        --resources "$resources_dir"
+        --package-path "$packages_dir"
+    )
+    if [ "$sign_pkg" = true ]; then
+        product_args+=(--sign "$INSTALLER_SIGN_IDENTITY" --timestamp)
+    fi
+    productbuild "${product_args[@]}" "$output_pkg" > /dev/null
+
+    if [ "$sign_pkg" = true ]; then
+        pkgutil --check-signature "$output_pkg"
+    fi
+    if [ "$notarize_pkg" = true ]; then
+        notarize_mac_artifact "$output_pkg" --staple
+    fi
+}
+
 # Enable calling functions directly as arguments:
 # ./common.sh print_green "hello"
 # shellcheck disable=SC2128

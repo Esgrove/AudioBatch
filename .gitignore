@@ -37,6 +37,7 @@
 
 # Repository-root Cargo artifacts
 /target/
+/dist/
 
 # Build
 
