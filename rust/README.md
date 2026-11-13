@@ -160,6 +160,8 @@ and the shared [`macos.entitlements`](../assets/macos.entitlements) relaxes libr
 and unsigned executable memory so third-party plugins load in-process.
 Pass `--notarize` to `install.sh` or `./package-macos.sh` with `APPLE_TEAM_ID`, `CODESIGN_IDENTITY`,
 `INSTALLER_SIGN_IDENTITY`, and `APPLE_NOTARY_PROFILE` configured to notarize and staple with Apple's notary service.
+Local `install.sh --notarize` covers the GUI bundle only and rejects `--cli-only`.
+Distributed CLIs are signed before packaging and covered by notarization of the final `.pkg`.
 `./package-macos.sh` builds a non-relocatable Apple Silicon (`apple-m1`, macOS 15+)
 installer in `../dist/macos/AudioBatchRs-<version>.pkg` with customizable Application
 (`/Applications`) and CLI (`/usr/local/bin`, zsh completions, and license notices) choices.

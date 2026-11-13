@@ -30,7 +30,8 @@ OPTIONS: All options are optional
         Rust still builds and installs through Cargo's incremental build cache.
 
     -z | --notarize
-        Sign with Developer ID, submit to Apple's notary service, and staple the GUI app (macOS only).
+        Sign with Developer ID, notarize, and staple the GUI app only (macOS only).
+        Cannot be combined with --cli-only. CLI distribution is notarized through package-macos.sh.
         Requires APPLE_TEAM_ID / CODESIGN_IDENTITY and notarization credentials in the environment.
 
     -v | --verbose
@@ -75,6 +76,9 @@ parse_arguments() {
         shift
     done
 
+    if [ "$NOTARIZE" = true ] && [ "$INSTALL_APP" = false ]; then
+        print_error_and_exit "--cli-only cannot be combined with --notarize. Use package-macos.sh for CLI distribution."
+    fi
     if [ "$NOTARIZE" = true ] && [ "$BASH_PLATFORM" != "mac" ]; then
         print_error_and_exit "--notarize is only supported on macOS."
     fi
@@ -146,11 +150,6 @@ install_application() {
         local usual_cargo_bin="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin"
         if [ "$(dirname "$cli_installed_path")" != "$usual_cargo_bin" ]; then
             print_yellow "PATH selects $cli_installed_path. Check Cargo's reported destination for a shadowed installation."
-        fi
-        if [ "$BASH_PLATFORM" = "mac" ]; then
-            if [ "$NOTARIZE" = true ]; then
-                notarize_mac_artifact "$cli_installed_path"
-            fi
         fi
         copy_third_party_licenses "$(dirname "$cli_installed_path")/audiobatch-rs-licenses"
     fi
