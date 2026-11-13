@@ -8,11 +8,15 @@
 
 #include <juce_dsp/juce_dsp.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <numbers>
 #include <optional>
+#include <span>
+#include <utility>
 #include <vector>
 
 namespace esgrove::image_control
@@ -39,7 +43,136 @@ double blackmanHarris(const int index, const int length)
     }
     return value;
 }
+
+/// Builds the full symmetric Blackman-Harris window of 2 * halfLength + 1 taps.
+std::vector<double> buildWindow(const int length)
+{
+    std::vector<double> result(static_cast<std::size_t>(length));
+    for (int tap = 0; tap < length; ++tap) {
+        result[static_cast<std::size_t>(tap)] = blackmanHarris(tap, length);
+    }
+    return result;
+}
+
+/// Windows and normalizes an inverse-transformed real-even lowpass impulse response to unity DC gain.
+std::vector<float> finishLowpassKernel(
+    const std::span<const float> spectrum,
+    const std::span<const double> window,
+    std::span<double> taps,
+    const int halfLength,
+    const int fftSize
+)
+{
+    double sum = 0.0;
+    for (int offset = -halfLength; offset <= halfLength; ++offset) {
+        const auto circularIndex = static_cast<std::size_t>((offset + fftSize) % fftSize);
+        const auto tap = static_cast<std::size_t>(offset) + static_cast<std::size_t>(halfLength);
+        const double value = static_cast<double>(spectrum[circularIndex]) * window[tap];
+        taps[tap] = value;
+        sum += value;
+    }
+    std::vector<float> kernel(taps.size());
+    for (std::size_t tap = 0; tap < taps.size(); ++tap) {
+        kernel[tap] = static_cast<float>(taps[tap] / sum);
+    }
+    return kernel;
+}
+
+/// Windows an inverse-transformed imaginary-odd quadrature impulse response onto exact antisymmetric tap pairs.
+std::vector<float> finishQuadratureKernel(
+    const std::span<const float> spectrum,
+    const std::span<const double> window,
+    const int halfLength,
+    const int fftSize
+)
+{
+    std::vector<float> kernel(window.size(), 0.0F);
+    const auto centre = static_cast<std::size_t>(halfLength);
+    for (int offset = 1; offset <= halfLength; ++offset) {
+        const auto positive = static_cast<std::size_t>(offset);
+        const auto negative = static_cast<std::size_t>(fftSize - offset);
+        // Project FFT rounding back onto the odd impulse response before rounding each shared tap to float.
+        const double value = (static_cast<double>(spectrum[positive]) - static_cast<double>(spectrum[negative])) * 0.5
+            * window[centre + positive];
+        const auto tap = static_cast<float>(value);
+        kernel[centre + positive] = tap;
+        kernel[centre - positive] = -tap;
+    }
+    return kernel;
+}
 }  // namespace
+
+/// Precomputes the design FFT, Blackman-Harris window, workspaces, and constant fullband quadrature kernel.
+void CrossoverDesigner::prepare(const double newSampleRate, const int newHalfLength)
+{
+    sampleRate = newSampleRate;
+    halfLength = newHalfLength;
+    const int length = 2 * halfLength + 1;
+    const int fftOrder = juce::roundToInt(std::log2(static_cast<double>(halfLength * DESIGN_OVERSAMPLING)));
+    fft = std::make_unique<juce::dsp::FFT>(fftOrder);
+    const int fftSize = fft->getSize();
+    window = buildWindow(length);
+    lowpassTaps.assign(static_cast<std::size_t>(length), 0.0);
+    lowpassSpectrum.assign(static_cast<std::size_t>(fftSize) * 2, 0.0F);
+    quadratureSpectrum.assign(static_cast<std::size_t>(fftSize) * 2, 0.0F);
+
+    std::ranges::fill(quadratureSpectrum, 0.0F);
+    for (int bin = 1; bin < fftSize / 2; ++bin) {
+        quadratureSpectrum[static_cast<std::size_t>(bin) * 2 + 1] = -1.0F;
+        quadratureSpectrum[static_cast<std::size_t>(fftSize - bin) * 2 + 1] = 1.0F;
+    }
+    fft->performRealOnlyInverseTransform(quadratureSpectrum.data());
+    fullQuadratureKernel = finishQuadratureKernel(quadratureSpectrum, window, halfLength, fftSize);
+}
+
+/// Designs the three ordinary lowpasses, three quadrature lowpasses, and cached fullband quadrature kernel.
+/// Evaluates crossoverLowpassMagnitude once per bin for each crossover pair.
+std::vector<std::vector<float>> CrossoverDesigner::designKernelSet(const Crossovers& crossovers)
+{
+    if (fft == nullptr) {
+        prepare(sampleRate, halfLength);
+    }
+    const int fftSize = fft->getSize();
+    const double binWidth = sampleRate / static_cast<double>(fftSize);
+
+    std::vector<std::vector<float>> ordinary;
+    std::vector<std::vector<float>> quadrature;
+    ordinary.reserve(CROSSOVER_COUNT);
+    quadrature.reserve(CROSSOVER_COUNT);
+
+    for (const float crossover : crossovers) {
+        const auto target = static_cast<double>(crossover);
+        std::ranges::fill(lowpassSpectrum, 0.0F);
+        std::ranges::fill(quadratureSpectrum, 0.0F);
+        lowpassSpectrum[0] = 1.0F;
+        for (int bin = 1; bin < fftSize / 2; ++bin) {
+            const auto magnitude
+                = static_cast<float>(crossoverLowpassMagnitude(static_cast<double>(bin) * binWidth, target));
+            lowpassSpectrum[static_cast<std::size_t>(bin) * 2] = magnitude;
+            quadratureSpectrum[static_cast<std::size_t>(bin) * 2 + 1] = -magnitude;
+            quadratureSpectrum[static_cast<std::size_t>(fftSize - bin) * 2 + 1] = magnitude;
+        }
+        const int nyquistBin = fftSize / 2;
+        lowpassSpectrum[static_cast<std::size_t>(nyquistBin) * 2]
+            = static_cast<float>(crossoverLowpassMagnitude(static_cast<double>(nyquistBin) * binWidth, target));
+
+        fft->performRealOnlyInverseTransform(lowpassSpectrum.data());
+        fft->performRealOnlyInverseTransform(quadratureSpectrum.data());
+        ordinary.push_back(finishLowpassKernel(lowpassSpectrum, window, lowpassTaps, halfLength, fftSize));
+        quadrature.push_back(finishQuadratureKernel(quadratureSpectrum, window, halfLength, fftSize));
+    }
+
+    std::vector<std::vector<float>> kernels;
+    kernels.reserve(CROSSOVER_COUNT * 2 + 1);
+    for (auto& kernel : ordinary) {
+        kernels.push_back(std::move(kernel));
+    }
+    for (auto& kernel : quadrature) {
+        kernels.push_back(std::move(kernel));
+    }
+    kernels.push_back(fullQuadratureKernel);
+    return kernels;
+}
 
 /// Designs a lowpass kernel of length 2 × halfLength + 1 for a crossover at the given frequency.
 /// The kernel is symmetric around its centre tap, so it delays every frequency by halfLength samples,

@@ -767,4 +767,27 @@ TEST(Imager, DeltaWithASoloedBandCarriesOnlyThatBandsChange)
         EXPECT_NEAR(ratio, frequency < 500.0 ? 1.0 : 0.0, 0.01);
     }
 }
+
+TEST(Imager, UnpreparedAndReleasedProcessClearsBufferSafely)
+{
+    MultibandImager imager;
+    imager.setCrossovers({120.0F, 900.0F, 6000.0F}, true);
+    auto buffer = makeBuffer({makeSine(440.0, 0.5F, 512), makeSine(880.0, 0.5F, 512)});
+    imager.process(buffer);
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+            ASSERT_FLOAT_EQ(buffer.getSample(channel, sample), 0.0F);
+        }
+    }
+
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    imager.release();
+    buffer = makeBuffer({makeSine(440.0, 0.5F, 512), makeSine(880.0, 0.5F, 512)});
+    imager.process(buffer);
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+            ASSERT_FLOAT_EQ(buffer.getSample(channel, sample), 0.0F);
+        }
+    }
+}
 }  // namespace esgrove::image_control::test
