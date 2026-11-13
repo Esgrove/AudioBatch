@@ -1,6 +1,8 @@
 //! Text the plugin windows and menus show: plugin and slot labels, latencies, the chain summary,
 //! and the known effects grouped by vendor.
 
+use std::collections::HashMap;
+
 use audiobatch_core::sorting::compare_natural;
 use audiobatch_plugins::PluginDescription;
 
@@ -72,26 +74,36 @@ pub fn chain_summary<'a>(slots: impl IntoIterator<Item = (&'a str, bool)>) -> St
 }
 
 /// Groups the effects among the plugins by vendor, in natural order of the vendors and of the names.
+/// Differently capitalized spellings of one vendor are merged, and `UNKNOWN_VENDOR` sorts last.
 /// Instruments are left out, because the chain only processes audio.
 #[must_use]
 pub fn group_by_vendor(plugins: &[PluginDescription]) -> Vec<VendorGroup> {
-    let mut effects: Vec<&PluginDescription> = plugins.iter().filter(|plugin| !plugin.is_instrument).collect();
-    effects.sort_by(|first, second| {
-        compare_natural(vendor_name(first), vendor_name(second))
-            .then_with(|| compare_natural(&first.name, &second.name))
-            .then_with(|| compare_natural(&first.format.to_string(), &second.format.to_string()))
-    });
-    let mut groups: Vec<VendorGroup> = Vec::new();
-    for plugin in effects {
+    let mut groups_by_key: HashMap<String, VendorGroup> = HashMap::new();
+    for plugin in plugins.iter().filter(|plugin| !plugin.is_instrument) {
         let vendor = vendor_name(plugin);
-        match groups.last_mut() {
-            Some(group) if group.vendor == vendor => group.plugins.push(plugin.clone()),
-            _ => groups.push(VendorGroup {
+        groups_by_key
+            .entry(vendor.to_lowercase())
+            .or_insert_with(|| VendorGroup {
                 vendor: vendor.to_string(),
-                plugins: vec![plugin.clone()],
-            }),
-        }
+                plugins: Vec::new(),
+            })
+            .plugins
+            .push(plugin.clone());
     }
+    let mut groups: Vec<VendorGroup> = groups_by_key.into_values().collect();
+    for group in &mut groups {
+        group.plugins.sort_by(|first, second| {
+            compare_natural(&first.name, &second.name)
+                .then_with(|| compare_natural(&first.format.to_string(), &second.format.to_string()))
+        });
+    }
+    groups.sort_by(|first, second| {
+        let first_unknown = first.vendor.eq_ignore_ascii_case(UNKNOWN_VENDOR);
+        let second_unknown = second.vendor.eq_ignore_ascii_case(UNKNOWN_VENDOR);
+        first_unknown
+            .cmp(&second_unknown)
+            .then_with(|| compare_natural(&first.vendor, &second.vendor))
+    });
     groups
 }
 
@@ -151,6 +163,7 @@ mod test_labels {
             plugin("acme", "Delay 10"),
             plugin("", "Mystery"),
             plugin("Beta", "Reverb"),
+            plugin("Acme", "Compressor"),
             plugin("acme", "Delay 2"),
             instrument,
         ];
@@ -165,7 +178,7 @@ mod test_labels {
         assert_eq!(
             summary,
             vec![
-                ("acme", vec!["Delay 2", "Delay 10"]),
+                ("acme", vec!["Compressor", "Delay 2", "Delay 10"]),
                 ("Beta", vec!["Reverb"]),
                 (UNKNOWN_VENDOR, vec!["Mystery"]),
             ]

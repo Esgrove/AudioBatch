@@ -124,12 +124,11 @@ pub(super) fn paint(data: &PaintData, viewport: &Viewport, window: &mut Window) 
     }
     let lane_height = f32::from(plot.size.height) / channels as f32;
     for channel in 0..channels {
-        let projected = project_columns(history, channel, viewport.start, viewport.length, columns);
-        let filtered: Vec<_> = projected
-            .into_iter()
-            .map(|flags| data.overload_settings.visible_flags(flags))
-            .collect();
-        let runs = warning_paint_runs(&filtered);
+        let mut projected = project_columns(history, channel, viewport.start, viewport.length, columns);
+        for flags in &mut projected {
+            *flags = data.overload_settings.visible_flags(*flags);
+        }
+        let runs = warning_paint_runs(&projected);
         let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
         let cap_height = CAP_HEIGHT.min(lane_height / 4.0);
         for run in runs {

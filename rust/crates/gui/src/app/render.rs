@@ -9,6 +9,7 @@
 //! The window title shows the progress of analysis, normalization, or plugin processing,
 //! and files dropped anywhere on the window are added.
 
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -102,7 +103,7 @@ const COMPACT_SPACING: f32 = 6.0;
 const COMPACT_METRICS_PROPORTION: f32 = 0.35;
 
 /// Narrowest width of the compact metrics: four cards 100 pixels wide with the spacing between them.
-const COMPACT_METRICS_MINIMUM_WIDTH: f32 = 400.0 + COMPACT_METRIC_SPACING * 3.0;
+const COMPACT_METRICS_MINIMUM_WIDTH: f32 = COMPACT_METRIC_SPACING.mul_add(3.0, 400.0);
 
 /// Narrowest width the compact row leaves the waveform before the metrics stop shrinking it.
 const COMPACT_WAVEFORM_MINIMUM_WIDTH: f32 = 140.0;
@@ -145,33 +146,6 @@ impl PreviewStartupFit {
 }
 
 impl AppView {
-    /// Applies a queued zoom reset through the retained slider state before composing the frame.
-    fn apply_pending_zoom_reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.zoom_reset_pending) {
-            self.zoom_slider
-                .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
-        }
-    }
-
-    /// Returns the status bar text for the audio output:
-    /// the device name, its sample rate, and its buffer size, for example "Speakers, 48 kHz, 512 samples".
-    /// The buffer size is left out until the first audio callback reports it.
-    pub(super) fn output_label(&self) -> SharedString {
-        self.player.as_ref().map_or_else(
-            || SharedString::from("No output device"),
-            |player| {
-                let mut parts = vec![
-                    player.device_name().to_string(),
-                    format!("{} kHz", format_kilohertz(player.output_rate())),
-                ];
-                if let Some(frames) = player.buffer_frames() {
-                    parts.push(format!("{frames} samples"));
-                }
-                SharedString::from(parts.join(", "))
-            },
-        )
-    }
-
     /// Waits for matching startup geometry on consecutive frames, including deferred platform maximization.
     /// Commits the controls-fit split once, and never refits it on later resize, selection, or artwork arrival.
     pub fn schedule_preview_startup_fit(&self, initially_maximized: bool, window: &Window, cx: &Context<Self>) {
@@ -195,6 +169,33 @@ impl AppView {
         });
     }
 
+    /// Returns the status bar text for the audio output:
+    /// the device name, its sample rate, and its buffer size, for example "Speakers, 48 kHz, 512 samples".
+    /// The buffer size is left out until the first audio callback reports it.
+    pub(super) fn output_label(&self) -> SharedString {
+        self.player.as_ref().map_or_else(
+            || SharedString::from("No output device"),
+            |player| {
+                let mut parts = vec![
+                    player.device_name().to_string(),
+                    format!("{} kHz", format_kilohertz(player.output_rate())),
+                ];
+                if let Some(frames) = player.buffer_frames() {
+                    parts.push(format!("{frames} samples"));
+                }
+                SharedString::from(parts.join(", "))
+            },
+        )
+    }
+
+    /// Applies a queued zoom reset through the retained slider state before composing the frame.
+    fn apply_pending_zoom_reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.zoom_reset_pending) {
+            self.zoom_slider
+                .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
+        }
+    }
+
     /// Sets the window title, with the activity and its progress while a run is in progress.
     fn update_window_title(&mut self, progress: Option<ActivityProgress>, window: &mut Window) {
         let title = progress.map_or_else(
@@ -207,9 +208,14 @@ impl AppView {
         }
     }
 
-    /// Returns the status bar text for the listed folders: the first one, with the number of further roots.
+    /// Returns the status bar text for the listed root folders: the first one, with the number of further roots.
     fn root_label(&self) -> String {
-        match self.roots.as_slice() {
+        let directories: Vec<&PathBuf> = self
+            .roots
+            .iter()
+            .filter(|root| root.is_dir() || self.is_demo())
+            .collect();
+        match directories.as_slice() {
             [] => String::new(),
             [single] => single.display().to_string(),
             [first, rest @ ..] => format!("{} (+{} more)", first.display(), rest.len()),
@@ -222,6 +228,7 @@ impl AppView {
         let roots = self
             .roots
             .iter()
+            .filter(|root| root.is_dir() || self.is_demo())
             .map(|root| root.display().to_string())
             .collect::<Vec<_>>()
             .join("\n");
@@ -242,7 +249,7 @@ impl AppView {
             let duration = player.duration_seconds()?;
             (duration > 0.0).then(|| format_playback_time(player.position_seconds(), duration))
         });
-        let status = if self.is_running() {
+        let status = if self.is_running() || self.status_sticky {
             self.status.clone()
         } else {
             self.enrichment.progress().map_or_else(
@@ -328,11 +335,11 @@ impl AppView {
             )
     }
 
-    /// Returns the row of the selected file, for the information panel.
-    fn selected_row(&self, cx: &App) -> Option<ResultRow> {
+    /// Borrows the row of the selected file for the information panel without cloning its record.
+    fn selected_row<'app>(&'app self, cx: &'app App) -> Option<&'app ResultRow> {
         self.selected
             .as_ref()
-            .and_then(|path| self.table.read(cx).delegate().row_for(path).cloned())
+            .and_then(|path| self.table.read(cx).delegate().row_for(path))
     }
 
     /// Returns the app state the right-click row menu of the results table shows.
@@ -405,7 +412,7 @@ impl AppView {
                     .h_full()
                     .flex_none()
                     .child(render_info_panel(
-                        self.selected_row(cx).as_ref(),
+                        self.selected_row(cx),
                         selected_tags.as_deref(),
                         self.selected_artwork(),
                         wide,
@@ -479,7 +486,7 @@ impl AppView {
                     .h_full()
                     .flex_none()
                     .child(render_compact_info_panel(
-                        self.selected_row(cx).as_ref(),
+                        self.selected_row(cx),
                         self.settings.show_gain_adjusted_metrics,
                         self.gained_loudness(cx),
                     )),
@@ -538,15 +545,7 @@ impl AppView {
             view.handle_controls_event(*event, window, cx);
         }))
     }
-}
 
-impl Focusable for AppView {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl AppView {
     /// Synchronizes table sizing and pending controls before composing the main frame.
     fn prepare_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> PreparedFrame {
         // A removed or disabled slider must not strand the window's contextual action path.
@@ -580,9 +579,7 @@ impl AppView {
             workspace_height,
         }
     }
-}
 
-impl AppView {
     /// Handles the Options menu actions that change the preview and the preferences.
     fn on_option_actions(element: Stateful<Div>, cx: &Context<Self>) -> Stateful<Div> {
         element
@@ -606,6 +603,12 @@ impl AppView {
                 view.toggle_play_from_first_cue_point(cx);
             }))
             .on_action(cx.listener(|view, _: &OpenAudioSettings, window, cx| view.open_settings_window(window, cx)))
+    }
+}
+
+impl Focusable for AppView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 

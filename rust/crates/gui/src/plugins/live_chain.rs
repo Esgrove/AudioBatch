@@ -115,14 +115,15 @@ struct LoadedInstance {
     accepted: bool,
 }
 
-impl LiveSlot {
-    /// Destroys the editor window, remembering where it was so the next editor of this slot opens there.
-    fn close_editor(&mut self) {
-        if let Some(editor) = self.editor.take() {
-            self.editor_position = editor.position().or(self.editor_position);
-        }
+impl SlotId {
+    /// Returns a stable element index for GPUI control identity across slot reordering and deletion.
+    #[must_use]
+    pub fn raw(self) -> usize {
+        usize::try_from(self.0).unwrap_or(usize::MAX)
     }
+}
 
+impl LiveSlot {
     /// Returns the slot's id.
     #[must_use]
     pub const fn id(&self) -> SlotId {
@@ -163,6 +164,13 @@ impl LiveSlot {
     #[must_use]
     pub const fn has_instance(&self) -> bool {
         self.instance.is_some()
+    }
+
+    /// Destroys the editor window, remembering where it was so the next editor of this slot opens there.
+    fn close_editor(&mut self) {
+        if let Some(editor) = self.editor.take() {
+            self.editor_position = editor.position().or(self.editor_position);
+        }
     }
 
     /// Loads the plugin with the slot's saved settings and prepares it at a rate.

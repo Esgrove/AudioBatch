@@ -11,6 +11,7 @@
 //! `ResultsDelegate` implements the gpui-kit `TableDelegate`, which renders only the visible rows,
 //! so lists of many thousands of files stay smooth.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::{FRAC_PI_2, TAU};
@@ -23,7 +24,7 @@ use audiobatch_core::format::{
     format_true_peak_compact, format_type_label,
 };
 use audiobatch_core::record::same_custom_gain;
-use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
+use audiobatch_core::sorting::compare_natural;
 use audiobatch_core::{AnalysisRecord, AnalysisStatus, MeasurementProducer, WaveformOverview};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
@@ -127,13 +128,6 @@ const COLUMNS: [ColumnSpec; 22] = [
     column_spec(ColumnKey::Path, "Path", "Full path of the file", 160.0, false),
     column_spec(ColumnKey::Type, "Type", "File type", 66.0, false),
     column_spec(
-        ColumnKey::Length,
-        "Length",
-        "Duration in minutes and seconds",
-        72.0,
-        true,
-    ),
-    column_spec(
         ColumnKey::BitDepth,
         "Bit Depth",
         "Bit depth of the source audio",
@@ -142,6 +136,13 @@ const COLUMNS: [ColumnSpec; 22] = [
     ),
     column_spec(ColumnKey::Bitrate, "Bitrate", "Average bitrate in kbps", 76.0, true),
     column_spec(ColumnKey::SampleRate, "Rate", "Sample rate in kHz", 70.0, true),
+    column_spec(
+        ColumnKey::Length,
+        "Length",
+        "Duration in minutes and seconds",
+        72.0,
+        true,
+    ),
     column_spec(ColumnKey::Peak, "Peak", "Sample peak in dBFS", 76.0, true),
     column_spec(
         ColumnKey::PeakLeft,
@@ -286,8 +287,12 @@ pub struct RowMessage {
 
 /// Table data source for the analysis results.
 pub struct ResultsDelegate {
+    /// Rows in their current sorted display order.
     rows: Vec<ResultRow>,
+    /// Lookup from file path to its current display index in `rows`.
     index: HashMap<PathBuf, usize>,
+    /// In-flight row progress fractions keyed by path so per-frame progress reads stay `O(active_workers)`.
+    active_fractions: HashMap<PathBuf, f32>,
     /// Explicit edits, including clears, scoped to the file identity they were made for.
     gain_edits: HashMap<PathBuf, CustomGainEdit>,
     /// Definitions of the shown columns in display order, which changes when the user drags a column.
@@ -298,6 +303,7 @@ pub struct ResultsDelegate {
     all_columns: Vec<(ColumnKey, Column)>,
     /// Columns the user has hidden.
     hidden: HashSet<ColumnKey>,
+    /// Primary sort column and direction, or `None` for natural path order.
     sort: Option<(ColumnKey, ColumnSort)>,
     /// Column that orders rows the primary sort leaves equal, and whether it is ascending,
     /// set by a Command or Control click on a header.
@@ -321,7 +327,7 @@ pub struct ResultsDelegate {
 }
 
 /// The app state behind the right-click row menu, which the delegate cannot see itself.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct RowMenuState {
     /// Focus handle of the main view, which handles the menu's actions.
     pub action_context: Option<FocusHandle>,
@@ -363,8 +369,7 @@ impl ResultRow {
     pub fn pending(path: PathBuf) -> Self {
         let file_name = path
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().into_owned());
         Self {
             path,
             file_name: file_name.into(),
@@ -395,19 +400,25 @@ impl ResultRow {
         self.state == RowState::Done && self.record.as_ref().is_some_and(AnalysisRecord::has_error)
     }
 
+    /// Returns the status text without allocating a new `String`.
+    #[must_use]
+    pub fn status_str(&self) -> &str {
+        match (&self.state, &self.record, &self.message) {
+            (RowState::Pending, _, _) => "Waiting",
+            (RowState::Analyzing(_), _, _) => "Analyzing",
+            (RowState::Normalizing(_), _, _) => "Normalizing",
+            (RowState::Processing(_), _, _) => "Processing",
+            (RowState::Done, _, Some(message)) => message.text.as_str(),
+            (RowState::Done, Some(record), None) => gui_measurement_status(record),
+            (RowState::Done, None, None) => "",
+        }
+    }
+
     /// Returns the status text, with an activity label while the file is busy,
     /// and the message of the last normalization or plugin processing once it is done.
     #[must_use]
     pub fn status_text(&self) -> String {
-        match (&self.state, &self.record, &self.message) {
-            (RowState::Pending, _, _) => String::from("Waiting"),
-            (RowState::Analyzing(_), _, _) => String::from("Analyzing"),
-            (RowState::Normalizing(_), _, _) => String::from("Normalizing"),
-            (RowState::Processing(_), _, _) => String::from("Processing"),
-            (RowState::Done, _, Some(message)) => message.text.clone(),
-            (RowState::Done, Some(record), None) => gui_measurement_status(record).to_string(),
-            (RowState::Done, None, None) => String::new(),
-        }
+        self.status_str().to_owned()
     }
 
     /// Returns true when the Status column shows a failure:
@@ -461,6 +472,7 @@ impl ResultsDelegate {
         let mut delegate = Self {
             rows: Vec::new(),
             index: HashMap::new(),
+            active_fractions: HashMap::new(),
             gain_edits: HashMap::new(),
             columns: Vec::new(),
             order: Vec::new(),
@@ -487,52 +499,11 @@ impl ResultsDelegate {
         delegate
     }
 
-    /// Updates the app state the right-click row menu shows.
+    /// Updates the app state the right-click row menu shows when it changed.
     pub fn set_row_menu_state(&mut self, state: RowMenuState) {
-        self.row_menu = state;
-    }
-
-    /// Fills the right-click menu of the selected rows.
-    ///
-    /// The items, labels, and order match the C++ file menu, since both applications offer the same file actions.
-    /// The one difference is Normalization Format Support, because this application has no such dialog.
-    /// Every item acts on the whole selection, which right-clicking an unselected row first replaces with that row.
-    fn fill_row_menu(&self, menu: PopupMenu) -> PopupMenu {
-        let state = &self.row_menu;
-        let selected = self.selected_paths();
-        let any_exists = selected.iter().any(|path| path.exists());
-        let any_parent_folder = selected.iter().any(|path| path.parent().is_some_and(Path::is_dir));
-        let any_normalizable = selected
-            .iter()
-            .any(|path| self.row_for(path).and_then(ResultRow::ready_record).is_some());
-        let any_custom_gain = selected.iter().any(|path| {
-            self.row_for(path)
-                .and_then(|row| row.record.as_ref())
-                .is_some_and(|record| record.custom_gain_db.is_some())
-        });
-        let menu = match &state.action_context {
-            Some(focus) => menu.action_context(focus.clone()),
-            None => menu,
-        };
-        menu.menu_with_disabled(REVEAL_LABEL, Box::new(RevealSelected), !any_exists)
-            .menu_with_disabled(OPEN_PARENT_FOLDER_LABEL, Box::new(OpenParentFolder), !any_parent_folder)
-            .separator()
-            .menu_with_disabled("Re-analyze Selected", Box::new(ReanalyzeSelected), !state.idle)
-            .menu_with_disabled(
-                format!("Normalize to {}", state.normalize_target),
-                Box::new(NormalizeSelected),
-                !(state.can_normalize && any_normalizable),
-            )
-            .separator()
-            .menu_with_disabled(
-                "Process With Plugin Chain",
-                Box::new(ProcessSelected),
-                !(state.can_process && any_normalizable),
-            )
-            .menu_with_disabled("Clear Per-file Gain", Box::new(ClearCustomGain), !any_custom_gain)
-            .separator()
-            .menu_with_disabled("Remove from List", Box::new(RemoveSelected), selected.is_empty())
-            .menu_with_disabled("Move to Trash", Box::new(TrashSelected), !any_exists)
+        if self.row_menu != state {
+            self.row_menu = state;
+        }
     }
 
     /// Returns true when the column shows.
@@ -609,15 +580,7 @@ impl ResultsDelegate {
     /// Returns the summed fraction of the rows being worked on, for the overall progress.
     #[must_use]
     pub fn active_progress(&self) -> f32 {
-        self.rows
-            .iter()
-            .map(|row| match row.state {
-                RowState::Analyzing(fraction) | RowState::Normalizing(fraction) | RowState::Processing(fraction) => {
-                    fraction
-                }
-                RowState::Pending | RowState::Done => 0.0,
-            })
-            .sum()
+        self.active_fractions.values().copied().sum()
     }
 
     /// Replaces the rows with the planned files, keeping the results of files that are still listed.
@@ -633,6 +596,7 @@ impl ResultsDelegate {
             })
             .collect();
         self.sort_rows();
+        self.rebuild_active_fractions();
         self.extra_selected.retain(|path| self.index.contains_key(path));
         self.gain_edits.retain(|path, _| self.index.contains_key(path));
     }
@@ -642,11 +606,13 @@ impl ResultsDelegate {
         self.gain_edits.clear();
         self.rows = rows;
         self.sort_rows();
+        self.rebuild_active_fractions();
         self.extra_selected.retain(|path| self.index.contains_key(path));
     }
 
     /// Marks a listed file as waiting, for a run that works on only some of the files.
     pub fn mark_pending(&mut self, path: &Path) {
+        self.active_fractions.remove(path);
         if let Some(row) = self.row_mut(path) {
             row.state = RowState::Pending;
             row.message = None;
@@ -657,6 +623,7 @@ impl ResultsDelegate {
     pub fn mark_started(&mut self, path: &Path) {
         if let Some(row) = self.row_mut(path) {
             row.state = RowState::Analyzing(0.0);
+            self.active_fractions.insert(path.to_path_buf(), 0.0);
         }
     }
 
@@ -666,6 +633,7 @@ impl ResultsDelegate {
             && row.state != RowState::Done
         {
             row.state = RowState::Analyzing(fraction);
+            self.active_fractions.insert(path.to_path_buf(), fraction);
         }
     }
 
@@ -673,6 +641,7 @@ impl ResultsDelegate {
     pub fn mark_normalizing(&mut self, path: &Path, fraction: f32) {
         if let Some(row) = self.row_mut(path) {
             row.state = RowState::Normalizing(fraction);
+            self.active_fractions.insert(path.to_path_buf(), fraction);
         }
     }
 
@@ -680,12 +649,14 @@ impl ResultsDelegate {
     pub fn mark_processing(&mut self, path: &Path, fraction: f32) {
         if let Some(row) = self.row_mut(path) {
             row.state = RowState::Processing(fraction);
+            self.active_fractions.insert(path.to_path_buf(), fraction);
         }
     }
 
     /// Ends the normalization or plugin processing of a file that was left unchanged,
     /// keeping its record and showing the reason.
     pub fn fail_operation(&mut self, path: &Path, error: &str) {
+        self.active_fractions.remove(path);
         if let Some(row) = self.row_mut(path) {
             row.state = RowState::Done;
             row.message = Some(RowMessage {
@@ -713,6 +684,8 @@ impl ResultsDelegate {
                 self.extra_selected.insert(output_path.clone());
             }
         }
+        self.active_fractions.remove(source);
+        self.active_fractions.remove(&output_path);
         self.merge_custom_gain(&mut output);
         if let Some(row) = self.row_mut(&output_path) {
             row.state = RowState::Done;
@@ -734,6 +707,7 @@ impl ResultsDelegate {
         reason = "The outer option requests persistence, the inner option is a nullable gain"
     )]
     pub fn set_record(&mut self, mut record: AnalysisRecord) -> Option<Option<f32>> {
+        self.active_fractions.remove(&record.path);
         let carried_over = self.merge_custom_gain(&mut record);
         let Some(row) = self.row_mut(&record.path) else {
             self.index.insert(record.path.clone(), self.rows.len());
@@ -810,6 +784,7 @@ impl ResultsDelegate {
     pub fn remove(&mut self, path: &Path) -> Option<usize> {
         let index = self.index_of(path)?;
         self.rows.remove(index);
+        self.active_fractions.remove(path);
         self.gain_edits.remove(path);
         self.extra_selected.remove(path);
         self.rebuild_index();
@@ -820,6 +795,7 @@ impl ResultsDelegate {
     pub fn remove_many(&mut self, paths: &HashSet<PathBuf>) -> usize {
         let count = self.rows.len();
         self.rows.retain(|row| !paths.contains(&row.path));
+        self.active_fractions.retain(|path, _| !paths.contains(path));
         self.extra_selected.retain(|path| !paths.contains(path));
         self.gain_edits.retain(|path, _| !paths.contains(path));
         self.rebuild_index();
@@ -830,6 +806,12 @@ impl ResultsDelegate {
     pub fn update_row(&mut self, index: usize, update: impl FnOnce(&mut ResultRow)) {
         if let Some(row) = self.rows.get_mut(index) {
             update(row);
+            let path = row.path.clone();
+            if let Some(fraction) = active_fraction(row.state) {
+                self.active_fractions.insert(path, fraction);
+            } else {
+                self.active_fractions.remove(&path);
+            }
         }
     }
 
@@ -846,6 +828,7 @@ impl ResultsDelegate {
                 row.state = RowState::Done;
             }
         }
+        self.rebuild_active_fractions();
     }
 
     /// Settles the rows a cancelled analysis left waiting or analyzing, so no row stays busy:
@@ -881,6 +864,7 @@ impl ResultsDelegate {
                 });
             }
         }
+        self.rebuild_active_fractions();
     }
 
     /// Remembers the file the app has selected, so a sort from the header can select its row again.
@@ -909,6 +893,9 @@ impl ResultsDelegate {
     /// Returns the selected files, the app's selected file first and the others in row order.
     #[must_use]
     pub fn selected_paths(&self) -> Vec<PathBuf> {
+        if self.extra_selected.is_empty() {
+            return self.selected.iter().cloned().collect();
+        }
         let extra = self
             .rows
             .iter()
@@ -984,6 +971,7 @@ impl ResultsDelegate {
     pub fn clear(&mut self) {
         self.rows.clear();
         self.index.clear();
+        self.active_fractions.clear();
         self.gain_edits.clear();
         self.extra_selected.clear();
     }
@@ -1008,7 +996,8 @@ impl ResultsDelegate {
                     };
                     directed(compare_column(first, second, key), ascending)
                         .then_with(by_secondary)
-                        .then_with(|| directed(compare_rows(first, second, key), ascending))
+                        .then_with(|| compare_natural(&first.file_name, &second.file_name))
+                        .then_with(|| compare_natural(&first.path.to_string_lossy(), &second.path.to_string_lossy()))
                 })
             }),
             None => self.rows.sort_by(|first, second| {
@@ -1115,13 +1104,20 @@ impl ResultsDelegate {
         self.sort_rows();
     }
 
-    /// Returns the columns the user can show or hide, with their titles, in the default order.
+    /// Returns the columns the user can show or hide, with their titles, following any header reordering.
     /// The Name column always shows.
-    pub fn column_choices() -> impl Iterator<Item = (ColumnKey, &'static str)> {
-        COLUMNS
+    pub fn ordered_column_choices(&self) -> impl Iterator<Item = (ColumnKey, &'static str)> + '_ {
+        let visible = self.order.iter().copied().filter(|&key| key != ColumnKey::Name);
+        let hidden = COLUMNS
             .iter()
-            .filter(|spec| spec.key != ColumnKey::Name)
-            .map(|spec| (spec.key, spec.title))
+            .map(|spec| spec.key)
+            .filter(|&key| key != ColumnKey::Name && !self.order.contains(&key));
+        visible.chain(hidden).filter_map(|key| {
+            COLUMNS
+                .iter()
+                .find(|spec| spec.key == key)
+                .map(|spec| (spec.key, spec.title))
+        })
     }
 
     /// Returns the column with the identifier the settings store, if there is one.
@@ -1134,6 +1130,59 @@ impl ResultsDelegate {
     #[must_use]
     pub const fn column_identifier(key: ColumnKey) -> &'static str {
         column_id(key)
+    }
+
+    /// Rebuilds the cached active-worker progress map from the current row states.
+    fn rebuild_active_fractions(&mut self) {
+        self.active_fractions.clear();
+        for row in &self.rows {
+            if let Some(fraction) = active_fraction(row.state) {
+                self.active_fractions.insert(row.path.clone(), fraction);
+            }
+        }
+    }
+
+    /// Fills the right-click menu of the selected rows.
+    ///
+    /// The items, labels, and order match the C++ file menu, since both applications offer the same file actions.
+    /// The one difference is Normalization Format Support, because this application has no such dialog.
+    /// Every item acts on the whole selection, which right-clicking an unselected row first replaces with that row.
+    fn fill_row_menu(&self, menu: PopupMenu) -> PopupMenu {
+        let state = &self.row_menu;
+        let selected = self.selected_paths();
+        let any_exists = selected.iter().any(|path| path.exists());
+        let any_parent_folder = selected.iter().any(|path| path.parent().is_some_and(Path::is_dir));
+        let any_normalizable = selected
+            .iter()
+            .any(|path| self.row_for(path).and_then(ResultRow::ready_record).is_some());
+        let any_custom_gain = selected.iter().any(|path| {
+            self.row_for(path)
+                .and_then(|row| row.record.as_ref())
+                .is_some_and(|record| record.custom_gain_db.is_some())
+        });
+        let menu = match &state.action_context {
+            Some(focus) => menu.action_context(focus.clone()),
+            None => menu,
+        };
+        menu.menu_with_disabled(REVEAL_LABEL, Box::new(RevealSelected), !any_exists)
+            .menu_with_disabled(OPEN_PARENT_FOLDER_LABEL, Box::new(OpenParentFolder), !any_parent_folder)
+            .separator()
+            .menu_with_disabled("Re-analyze Selected", Box::new(ReanalyzeSelected), !state.idle)
+            .menu_with_disabled(
+                format!("Normalize to {}", state.normalize_target),
+                Box::new(NormalizeSelected),
+                !(state.can_normalize && any_normalizable),
+            )
+            .separator()
+            .menu_with_disabled(
+                "Process With Plugin Chain",
+                Box::new(ProcessSelected),
+                !(state.can_process && any_normalizable),
+            )
+            .menu_with_disabled("Clear Per-file Gain", Box::new(ClearCustomGain), !any_custom_gain)
+            .separator()
+            .menu_with_disabled("Remove from List", Box::new(RemoveSelected), selected.is_empty())
+            .menu_with_disabled("Move to Trash", Box::new(TrashSelected), !any_exists)
     }
 
     /// Applies a plain pointer press, even when the pressed row is already the preview anchor.
@@ -1765,31 +1814,37 @@ fn level_text(record: &AnalysisRecord, key: ColumnKey) -> String {
     }
 }
 
-/// Returns the full parent folder of a file as text, for sorting the Folder column.
-fn parent_text(path: &Path) -> String {
-    path.parent()
-        .map_or_else(String::new, |parent| parent.to_string_lossy().into_owned())
+/// Returns the in-progress fraction for active states, or `None` for waiting and finished rows.
+const fn active_fraction(state: RowState) -> Option<f32> {
+    match state {
+        RowState::Analyzing(fraction) | RowState::Normalizing(fraction) | RowState::Processing(fraction) => {
+            Some(fraction)
+        }
+        RowState::Pending | RowState::Done => None,
+    }
+}
+
+/// Returns the full parent folder of a file as text without allocating on valid UTF-8 paths.
+fn parent_text(path: &Path) -> Cow<'_, str> {
+    path.parent().map_or(Cow::Borrowed(""), Path::to_string_lossy)
 }
 
 /// Returns the uppercase extension of a path.
 fn file_type(path: &Path) -> String {
     path.extension()
-        .map(|extension| extension.to_string_lossy().to_ascii_uppercase())
-        .unwrap_or_default()
+        .map_or_default(|extension| extension.to_string_lossy().to_ascii_uppercase())
 }
 
-/// Orders two rows ascending by a column, with the name breaking ties.
-fn compare_rows(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Ordering {
-    let by_name = || compare_natural(&first.file_name, &second.file_name);
-    let (Some(first_record), Some(second_record)) = (first.ready_record(), second.ready_record()) else {
-        return by_name();
-    };
-    match key {
-        ColumnKey::Name => compare_by_mode(first_record, second_record, SortMode::Name),
-        ColumnKey::Path => compare_by_mode(first_record, second_record, SortMode::Path),
-        ColumnKey::Peak => compare_by_mode(first_record, second_record, SortMode::Peak),
-        ColumnKey::Integrated => compare_by_mode(first_record, second_record, SortMode::Loudness),
-        _ => compare_column(first, second, key).then_with(by_name),
+/// Orders two loudness readings, treating all values at or below the silence floor as equal.
+fn compare_loudness_values(first: f64, second: f64) -> Ordering {
+    match (
+        audiobatch_core::record::is_silent_loudness(first),
+        audiobatch_core::record::is_silent_loudness(second),
+    ) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => first.total_cmp(&second),
     }
 }
 
@@ -1808,7 +1863,7 @@ fn compare_column(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orde
             .overall_peak
             .abs()
             .total_cmp(&second_record.overall_peak.abs()),
-        ColumnKey::Integrated => first_record.integrated_lufs.total_cmp(&second_record.integrated_lufs),
+        ColumnKey::Integrated => compare_loudness_values(first_record.integrated_lufs, second_record.integrated_lufs),
         ColumnKey::Clips => first_record
             .signal_metrics
             .total_clips()
@@ -1829,27 +1884,35 @@ fn compare_column(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orde
                 (None, None) => Ordering::Equal,
             }
         }
-        ColumnKey::Status => first.status_text().cmp(&second.status_text()),
+        ColumnKey::Status => compare_natural(first.status_str(), second.status_str()),
         ColumnKey::PeakLeft => first_record.peak_left.abs().total_cmp(&second_record.peak_left.abs()),
         ColumnKey::PeakRight => first_record.peak_right.abs().total_cmp(&second_record.peak_right.abs()),
         ColumnKey::TruePeak => first_record
             .overall_true_peak
             .abs()
             .total_cmp(&second_record.overall_true_peak.abs()),
-        ColumnKey::ShortTerm => first_record
-            .max_short_term_lufs
-            .total_cmp(&second_record.max_short_term_lufs),
+        ColumnKey::ShortTerm => {
+            compare_loudness_values(first_record.max_short_term_lufs, second_record.max_short_term_lufs)
+        }
         ColumnKey::Length => first_record.duration_seconds.total_cmp(&second_record.duration_seconds),
         ColumnKey::SampleRate => first_record.sample_rate.cmp(&second_record.sample_rate),
         ColumnKey::BitDepth => first_record.bits_per_sample.cmp(&second_record.bits_per_sample),
         ColumnKey::Bitrate => average_bitrate_kbps(first_record).total_cmp(&average_bitrate_kbps(second_record)),
-        ColumnKey::Type => format_type_label(first_record).cmp(&format_type_label(second_record)),
+        ColumnKey::Type => compare_natural(&format_type_label(first_record), &format_type_label(second_record)),
         // Files without a gain come first in ascending order.
         ColumnKey::Gain => match (first_record.custom_gain_db, second_record.custom_gain_db) {
             (Some(first_gain), Some(second_gain)) => first_gain.total_cmp(&second_gain),
             (first_gain, second_gain) => first_gain.is_some().cmp(&second_gain.is_some()),
         },
     }
+}
+
+/// Orders two rows ascending by a column with the natural file-name and path tiebreakers.
+#[cfg(test)]
+fn compare_rows(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Ordering {
+    compare_column(first, second, key)
+        .then_with(|| compare_natural(&first.file_name, &second.file_name))
+        .then_with(|| compare_natural(&first.path.to_string_lossy(), &second.path.to_string_lossy()))
 }
 
 #[cfg(test)]
@@ -2588,7 +2651,11 @@ mod test_column_visibility_and_sort {
         );
         delegate.set_column_visible(ColumnKey::Path, true);
         assert_eq!(column_keys(&delegate).get(2).map(String::as_str), Some("path"));
-        assert!(ResultsDelegate::column_choices().any(|(key, title)| key == ColumnKey::Folder && title == "Folder"));
+        assert!(
+            delegate
+                .ordered_column_choices()
+                .any(|(key, title)| key == ColumnKey::Folder && title == "Folder")
+        );
         assert_eq!(ResultsDelegate::column_from_id("folder"), Some(ColumnKey::Folder));
     }
 
@@ -2599,8 +2666,7 @@ mod test_column_visibility_and_sort {
             path: PathBuf::from(path),
             file_name: Path::new(path)
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+                .map_or_default(|name| name.to_string_lossy().into_owned()),
             status: AnalysisStatus::Analyzed,
             ..AnalysisRecord::default()
         };
@@ -2704,8 +2770,8 @@ mod test_column_visibility_and_sort {
             .map(ResultRow::from_record)
             .collect(),
         );
-        // The Peak sort breaks its own ties by loudness, quietest first.
-        assert_eq!(names(&delegate), ["b.wav", "c.wav", "a.wav"]);
+        // Without a secondary sort, Peak ties break by natural file name, matching C++ ResultsSorting.
+        assert_eq!(names(&delegate), ["b.wav", "a.wav", "c.wav"]);
         delegate.select_only(Some(PathBuf::from("/a.wav")));
         delegate.select_all();
         let previous_cursor = delegate.selected_index();
@@ -2713,9 +2779,10 @@ mod test_column_visibility_and_sort {
         delegate.toggle_secondary_sort(integrated.expect("the LUFS-I column shows"));
         assert_eq!(delegate.secondary_sort, Some((ColumnKey::Integrated, true)));
         assert_eq!(names(&delegate), ["b.wav", "c.wav", "a.wav"]);
+        assert_ne!(delegate.selected_index(), previous_cursor);
+        assert_eq!(delegate.selected_index(), Some(2));
         delegate.toggle_secondary_sort(integrated.expect("the LUFS-I column shows"));
         assert_eq!(names(&delegate), ["b.wav", "a.wav", "c.wav"]);
-        assert_ne!(delegate.selected_index(), previous_cursor);
         assert_eq!(delegate.selected_index(), Some(1));
         assert_eq!(
             delegate.selected_paths(),

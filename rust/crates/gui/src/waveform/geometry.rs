@@ -18,7 +18,7 @@ const PANE_GAP: f32 = 2.0;
 /// Height of the separate spectral-only source warning strip.
 const WARNING_HEIGHT: f32 = 4.0;
 /// Magnitude references, with the near-full-scale warning prioritized in compact lanes.
-const DECIBEL_LEVELS: [f32; 2] = [-1.0, -6.0];
+const DECIBEL_LEVELS: [(f32, &str); 2] = [(-1.0, "-1"), (-6.0, "-6")];
 /// Immutable display magnitude references, separate from pane-local label occupancy.
 static MAGNITUDES: OnceLock<[f32; 2]> = OnceLock::new();
 
@@ -47,7 +47,15 @@ pub(super) struct PreviewGeometry {
 pub(super) struct AmplitudeLabel {
     pub(super) bounds: Bounds<Pixels>,
     pub(super) y: f32,
+    #[cfg_attr(not(test), expect(dead_code, reason = "tests assert exact decibel priority"))]
     pub(super) decibels: f32,
+    pub(super) text: &'static str,
+}
+
+/// Reserved left and optional right axis gutters around one source plot.
+struct AxisGutters {
+    left: Bounds<Pixels>,
+    right: Bounds<Pixels>,
 }
 
 impl Viewport {
@@ -113,8 +121,14 @@ impl PreviewGeometry {
                 );
             }
         }
-        let (waveform_left, waveform_right) = reserve_axes(&mut geometry.waveform, loudness, scale);
-        let (spectral_left, spectral_right) = reserve_axes(&mut geometry.spectrogram, loudness, scale);
+        let AxisGutters {
+            left: waveform_left,
+            right: waveform_right,
+        } = reserve_axes(&mut geometry.waveform, loudness, scale);
+        let AxisGutters {
+            left: spectral_left,
+            right: spectral_right,
+        } = reserve_axes(&mut geometry.spectrogram, loudness, scale);
         geometry.amplitude_axis = waveform_left;
         geometry.frequency_axis = spectral_left;
         if loudness {
@@ -157,7 +171,7 @@ pub(super) fn amplitude_labels(geometry: PreviewGeometry, channels: u32, rem: Pi
     let height = relative(10.0, rem);
     let spacing = relative(2.0, rem);
     let lane_height = f32::from(geometry.waveform.size.height) / channels as f32;
-    let magnitudes = MAGNITUDES.get_or_init(|| DECIBEL_LEVELS.map(|decibels| 10.0_f32.powf(decibels / 20.0)));
+    let magnitudes = MAGNITUDES.get_or_init(|| DECIBEL_LEVELS.map(|(decibels, _)| 10.0_f32.powf(decibels / 20.0)));
     let mut labels = Vec::new();
     for channel in 0..channels {
         if lane_height < height {
@@ -165,7 +179,7 @@ pub(super) fn amplitude_labels(geometry: PreviewGeometry, channels: u32, rem: Pi
         }
         let top = (channel as f32).mul_add(lane_height, f32::from(geometry.waveform.origin.y));
         let mut occupied: Vec<(f32, f32)> = Vec::new();
-        let mut add = |amplitude: f32, decibels: f32| {
+        let mut add = |amplitude: f32, decibels: f32, text: &'static str| {
             let y = (1.0 - amplitude).mul_add(lane_height * 0.5, top);
             let label_top = height.mul_add(-0.5, y).clamp(top, top + lane_height - height);
             if occupied
@@ -182,11 +196,12 @@ pub(super) fn amplitude_labels(geometry: PreviewGeometry, channels: u32, rem: Pi
                 ),
                 y,
                 decibels,
+                text,
             });
         };
-        for (decibels, &magnitude) in DECIBEL_LEVELS.into_iter().zip(magnitudes) {
+        for ((decibels, text), &magnitude) in DECIBEL_LEVELS.into_iter().zip(magnitudes) {
             for polarity in [1.0, -1.0] {
-                add(polarity * magnitude, decibels);
+                add(polarity * magnitude, decibels, text);
             }
         }
     }
@@ -194,9 +209,12 @@ pub(super) fn amplitude_labels(geometry: PreviewGeometry, channels: u32, rem: Pi
 }
 
 /// Removes common left and optional right gutters, even when a paired pane does not use its LUFS lane.
-fn reserve_axes(plot: &mut Bounds<Pixels>, loudness: bool, scale: f32) -> (Bounds<Pixels>, Bounds<Pixels>) {
+fn reserve_axes(plot: &mut Bounds<Pixels>, loudness: bool, scale: f32) -> AxisGutters {
     if !has_area(*plot) {
-        return (Bounds::default(), Bounds::default());
+        return AxisGutters {
+            left: Bounds::default(),
+            right: Bounds::default(),
+        };
     }
     let left_width = (AXIS_GUTTER * scale).min(f32::from(plot.size.width));
     let left = Bounds::new(
@@ -218,7 +236,7 @@ fn reserve_axes(plot: &mut Bounds<Pixels>, loudness: bool, scale: f32) -> (Bound
     } else {
         Bounds::default()
     };
-    (left, right)
+    AxisGutters { left, right }
 }
 
 #[cfg(test)]

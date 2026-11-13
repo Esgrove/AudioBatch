@@ -420,12 +420,13 @@ impl ChainView {
     /// with the slot label above its latency or error, so the text leaves room for the buttons.
     fn render_row(row: &ChainRow, index: usize, count: usize, cx: &Context<Self>) -> Div {
         let id = row.id;
-        let enable = Checkbox::new(("chain-enabled", index))
+        let key = id.raw();
+        let enable = Checkbox::new(("chain-enabled", key))
             .checked(row.enabled)
             .tooltip(ENABLE_TOOLTIP)
             .on_change(cx.listener(move |_, checked: &bool, _, cx| cx.emit(ChainEvent::SetEnabled(id, *checked))));
         let label = div()
-            .id(("chain-label", index))
+            .id(("chain-label", key))
             .truncate()
             .text_color(color(if row.enabled {
                 palette::GREY_LIGHT
@@ -435,7 +436,7 @@ impl ChainView {
             .tooltip(tooltip(row.label.clone()))
             .child(row.label.clone());
         let detail = div()
-            .id(("chain-detail", index))
+            .id(("chain-detail", key))
             .truncate()
             .font_family(MONO_FONT)
             .text_size(px(LATENCY_FONT_SIZE))
@@ -452,7 +453,7 @@ impl ChainView {
             .flex_none()
             .gap(px(ARROW_SPACING))
             .child(
-                Button::new(("chain-up", index))
+                Button::new(("chain-up", key))
                     .icon(IconName::ArrowUp)
                     .w(px(ROW_BUTTON_HEIGHT))
                     .h(px(ROW_BUTTON_HEIGHT))
@@ -461,7 +462,7 @@ impl ChainView {
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(ChainEvent::Move(id, -1)))),
             )
             .child(
-                Button::new(("chain-down", index))
+                Button::new(("chain-down", key))
                     .icon(IconName::ArrowDown)
                     .w(px(ROW_BUTTON_HEIGHT))
                     .h(px(ROW_BUTTON_HEIGHT))
@@ -489,7 +490,7 @@ impl ChainView {
                     .child(detail),
             )
             .child(
-                Button::new(("chain-edit", index))
+                Button::new(("chain-edit", key))
                     .label("Edit")
                     .h(px(ROW_BUTTON_HEIGHT))
                     .tooltip(EDIT_TOOLTIP)
@@ -498,7 +499,7 @@ impl ChainView {
             )
             .child(arrows)
             .child(
-                Button::new(("chain-remove", index))
+                Button::new(("chain-remove", key))
                     .label("Remove")
                     .h(px(ROW_BUTTON_HEIGHT))
                     .tooltip(REMOVE_TOOLTIP)

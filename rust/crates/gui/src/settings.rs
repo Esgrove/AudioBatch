@@ -172,37 +172,6 @@ impl PreviewViewMode {
     }
 }
 
-impl Default for GuiSettings {
-    fn default() -> Self {
-        Self {
-            output_device: None,
-            sample_rate: None,
-            buffer_size: None,
-            preview_plugin_chain: false,
-            compensate_preview_latency: true,
-            continue_playback: false,
-            play_from_first_cue_point: false,
-            preview_view_mode: PreviewViewMode::Waveform,
-            show_sample_overloads: true,
-            show_true_peak_overloads: true,
-            show_overload_lines: true,
-            show_loudness_graph: false,
-            loudness_minimum: DEFAULT_LOUDNESS_MINIMUM,
-            loudness_maximum: DEFAULT_LOUDNESS_MAXIMUM,
-            normalize_mode: NormalizeMode::Peak,
-            normalize_target_peak_dbfs: DEFAULT_TARGET_PEAK_DBFS,
-            normalize_target_lufs: DEFAULT_TARGET_LUFS,
-            hidden_columns: None,
-            columns_revision: COLUMNS_REVISION,
-            serato_waveform_colours: true,
-            show_album_artwork: true,
-            show_gain_adjusted_metrics: true,
-            controls_width_scale: DEFAULT_CONTROLS_WIDTH_SCALE,
-            information_width_scale: DEFAULT_INFORMATION_WIDTH_SCALE,
-        }
-    }
-}
-
 impl GuiSettings {
     /// Reads the settings from a file, with the defaults when it is missing or invalid.
     /// An unknown preview mode falls back to waveform without changing the other preferences.
@@ -265,6 +234,37 @@ impl GuiSettings {
             device: self.output_device.clone(),
             sample_rate: self.sample_rate,
             buffer_size: self.buffer_size,
+        }
+    }
+}
+
+impl Default for GuiSettings {
+    fn default() -> Self {
+        Self {
+            output_device: None,
+            sample_rate: None,
+            buffer_size: None,
+            preview_plugin_chain: false,
+            compensate_preview_latency: true,
+            continue_playback: false,
+            play_from_first_cue_point: false,
+            preview_view_mode: PreviewViewMode::Waveform,
+            show_sample_overloads: true,
+            show_true_peak_overloads: true,
+            show_overload_lines: true,
+            show_loudness_graph: false,
+            loudness_minimum: DEFAULT_LOUDNESS_MINIMUM,
+            loudness_maximum: DEFAULT_LOUDNESS_MAXIMUM,
+            normalize_mode: NormalizeMode::Peak,
+            normalize_target_peak_dbfs: DEFAULT_TARGET_PEAK_DBFS,
+            normalize_target_lufs: DEFAULT_TARGET_LUFS,
+            hidden_columns: None,
+            columns_revision: COLUMNS_REVISION,
+            serato_waveform_colours: true,
+            show_album_artwork: true,
+            show_gain_adjusted_metrics: true,
+            controls_width_scale: DEFAULT_CONTROLS_WIDTH_SCALE,
+            information_width_scale: DEFAULT_INFORMATION_WIDTH_SCALE,
         }
     }
 }

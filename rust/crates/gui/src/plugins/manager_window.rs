@@ -17,8 +17,8 @@ use audiobatch_plugins::PluginDescription;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::{
-    Context, Div, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    Context, Div, ElementId, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 
 use super::labels::VendorGroup;
@@ -58,6 +58,24 @@ pub enum ManagerEvent {
     AddToChain(PluginDescription),
 }
 
+/// Bundle skipped during a plugin scan with its diagnostic reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedBundle {
+    /// Skipped bundle path.
+    pub bundle: PathBuf,
+    /// User-facing explanation of why the bundle was skipped.
+    pub reason: String,
+}
+
+/// Active plugin scan progress shown in the Plugin Manager.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActiveScan {
+    /// Completed fraction from `0.0` to `1.0`.
+    pub fraction: f32,
+    /// Display name of the bundle currently being scanned.
+    pub bundle: String,
+}
+
 /// What the window shows, collected by the main view.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ManagerSnapshot {
@@ -72,9 +90,9 @@ pub struct ManagerSnapshot {
     /// Bundles that crashed a scan.
     pub blacklist: Vec<PathBuf>,
     /// Bundles the last scan skipped, with the reason.
-    pub skipped: Vec<(PathBuf, String)>,
+    pub skipped: Vec<SkippedBundle>,
     /// Share of the bundles handled and the bundle being scanned, while a scan runs.
-    pub scanning: Option<(f32, String)>,
+    pub scanning: Option<ActiveScan>,
     /// Summary of the last scan of this session.
     pub last_scan: Option<String>,
 }
@@ -117,7 +135,7 @@ impl ManagerView {
                 .on_click(cx.listener(|_, _, _, cx| cx.emit(ManagerEvent::Scan)))
         };
         let status = match (&self.snapshot.scanning, &self.snapshot.last_scan) {
-            (Some((fraction, bundle)), _) => format!("Scanning {:.0}%: {bundle}", fraction * 100.0),
+            (Some(scan), _) => format!("Scanning {:.0}%: {}", scan.fraction * 100.0, scan.bundle),
             (None, Some(summary)) => summary.clone(),
             (None, None) => String::from("Scan to find plugins that were installed or updated."),
         };
@@ -140,12 +158,13 @@ impl ManagerView {
             "Scan folders (defaults)"
         };
         let mut group = panel(title);
-        for (index, folder) in self.snapshot.folders.iter().enumerate() {
+        for folder in &self.snapshot.folders {
             let removed = folder.clone();
+            let key = folder.to_string_lossy();
             group = group.child(path_row(
-                ("folder", index),
+                SharedString::from(format!("folder-{key}")),
                 folder,
-                Button::new(("folder-remove", index))
+                Button::new(SharedString::from(format!("folder-remove-{key}")))
                     .label("Remove")
                     .small()
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(ManagerEvent::RemoveFolder(removed.clone())))),
@@ -231,12 +250,13 @@ impl ManagerView {
         if self.snapshot.blacklist.is_empty() && self.snapshot.skipped.is_empty() {
             return group.child(hint("No plugin files were skipped."));
         }
-        for (index, bundle) in self.snapshot.blacklist.iter().enumerate() {
+        for bundle in &self.snapshot.blacklist {
             let removed = bundle.clone();
+            let key = bundle.to_string_lossy();
             group = group.child(path_row(
-                ("blacklisted", index),
+                SharedString::from(format!("blacklisted-{key}")),
                 bundle,
-                Button::new(("blacklist-remove", index))
+                Button::new(SharedString::from(format!("blacklist-remove-{key}")))
                     .label("Scan Again")
                     .small()
                     .tooltip("Remove the file from the blacklist, so the next scan tries it again.")
@@ -248,10 +268,11 @@ impl ManagerView {
         if !self.snapshot.blacklist.is_empty() {
             group = group.child(hint("Blacklisted after crashing a scan. Later scans skip them."));
         }
-        for (index, (bundle, reason)) in self.snapshot.skipped.iter().enumerate() {
+        for SkippedBundle { bundle, reason } in &self.snapshot.skipped {
+            let key = bundle.to_string_lossy();
             group = group.child(
                 div()
-                    .id(("skipped", index))
+                    .id(SharedString::from(format!("skipped-{key}")))
                     .flex()
                     .flex_row()
                     .gap(px(ROW_SPACING))
@@ -321,7 +342,7 @@ pub fn plugin_control_id(plugin: &PluginDescription) -> SharedString {
 }
 
 /// Renders a row with a path, its full text as the tooltip, and a button.
-fn path_row(id: (&'static str, usize), path: &Path, button: Button) -> impl IntoElement {
+fn path_row(id: impl Into<ElementId>, path: &Path, button: Button) -> impl IntoElement {
     div()
         .id(id)
         .flex()

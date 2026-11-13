@@ -236,8 +236,7 @@ impl SettingsView {
         self.sample_rates = snapshot
             .capabilities
             .as_ref()
-            .map(|capabilities| capabilities.sample_rates.clone())
-            .unwrap_or_default();
+            .map_or_default(|capabilities| capabilities.sample_rates.clone());
         if let Some(rate) = snapshot.sample_rate
             && !self.sample_rates.contains(&rate)
         {

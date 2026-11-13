@@ -98,7 +98,7 @@ pub fn open_folder(folder: &Path) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+mod test_explorer_reveal {
     use std::ffi::OsStr;
     use std::path::Path;
 

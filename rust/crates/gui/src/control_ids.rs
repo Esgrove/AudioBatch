@@ -53,6 +53,22 @@ pub const NORMALIZE_TARGET_LABEL: &str = "Normalization target";
 pub const CONTROLS_WIDTH_DIVIDER_LABEL: &str = "Resize controls";
 /// Accessible name of the divider that resizes the information panel.
 pub const INFORMATION_WIDTH_DIVIDER_LABEL: &str = "Resize information panel";
+/// Shared label of the Preview chain checkbox.
+pub const PREVIEW_CHAIN_LABEL: &str = "Preview chain";
+/// Shared label of the Plugin Chain button.
+pub const PLUGIN_CHAIN_LABEL: &str = "Plugin Chain";
+/// Shared label of the Audio Settings button.
+pub const AUDIO_SETTINGS_LABEL: &str = "Audio Settings";
+/// Shared label of the pre-plugin Normalize checkbox.
+pub const PROCESS_NORMALIZE_FIRST_LABEL: &str = "Normalize";
+/// Shared label of the Overwrite checkbox.
+pub const NORMALIZE_OVERWRITE_LABEL: &str = "Overwrite";
+/// Shared label of the Peak normalization mode button.
+pub const NORMALIZE_PEAK_LABEL: &str = "Peak";
+/// Shared label of the Loudness normalization mode button.
+pub const NORMALIZE_LOUDNESS_LABEL: &str = "Loudness";
+/// Shared label of the Normalize action button.
+pub const NORMALIZE_SELECTED_LABEL: &str = "Normalize";
 
 /// The root element of the Audio Settings window, a separate window from the button that opens it.
 pub const AUDIO_SETTINGS_WINDOW: &str = "audio-settings-window";

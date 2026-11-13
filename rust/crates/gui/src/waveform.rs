@@ -134,27 +134,76 @@ pub struct CueMarker {
     pub slot: u8,
 }
 
+/// Captured source identity of the displayed waveform record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WaveformSource {
+    path: std::path::PathBuf,
+    file_size: u64,
+    modified_time_ms: i64,
+}
+
+/// Cached waveform projection reused across 60 FPS playhead-only redraws.
+#[derive(Clone, PartialEq)]
+struct CachedWaveformKey {
+    overview_ptr: usize,
+    serato_ptr: usize,
+    origin_x_bits: u32,
+    origin_y_bits: u32,
+    width_bits: u32,
+    height_bits: u32,
+    start_bits: u64,
+    length_bits: u64,
+    gain_bits: u32,
+}
+
+/// Cached projected channel extents and optional Serato column colours.
+struct CachedWaveformProjection {
+    key: CachedWaveformKey,
+    channels: Vec<Vec<(f32, f32)>>,
+    colours: Vec<Option<OverviewColour>>,
+}
+
+thread_local! {
+    /// Retains the most recent projected waveform columns across animation ticks on the UI thread.
+    static CACHED_PROJECTION: std::cell::RefCell<Option<CachedWaveformProjection>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Paints the overview of one file.
 pub struct WaveformView {
+    /// Cached native min/max waveform overview when available.
     overview: Option<Arc<WaveformOverview>>,
+    /// Retained mel spectrogram raster when available.
     spectrogram: Option<SpectrogramRaster>,
+    /// True once spectrogram loading has completed for the current source.
     spectrogram_completed: bool,
+    /// Selected single or paired preview layout mode.
     view_mode: PreviewViewMode,
+    /// Source sample rate in hertz.
     source_rate: u32,
+    /// Source channel count.
     source_channels: u32,
+    /// Source frame count.
     source_frames: u64,
+    /// Source duration in seconds.
     source_duration: f64,
+    /// Enabled sample-over, true-peak-over, and vertical-line preferences.
     overload_settings: OverloadSettings,
     /// Captured analysis source, independent of waveform allocation and selected-preview generation.
-    source: Option<(std::path::PathBuf, u64, i64)>,
+    source: Option<WaveformSource>,
     /// Source-only warnings validated against the record, waveform, and on-disk file identity.
     overloads: SourceOverloads,
     /// Serato Overview of the file, which colours the envelope when present.
     serato_overview: Option<Arc<Overview>>,
+    /// Serato cue markers displayed along the top and bottom plot edges.
     cues: Vec<CueMarker>,
+    /// Short-term loudness curve displayed over the host plot.
     loudness: Option<Arc<ShortTermLoudnessHistory>>,
+    /// Placeholder message shown when no waveform or spectrogram is ready.
     placeholder: SharedString,
+    /// Live or simulated playhead source.
     playhead: Option<PlayheadSource>,
+    /// Horizontal zoom factor (`1.0` shows the full track).
     zoom: f64,
     /// Start of the visible range in seconds.
     visible_start: f64,
@@ -168,7 +217,9 @@ pub struct WaveformView {
     focus_handle: Option<FocusHandle>,
     /// Whether the Serato Overview colours the envelope.
     serato_colours: bool,
+    /// Whether the short-term loudness graph is drawn.
     show_loudness: bool,
+    /// Validated vertical LUFS axis bounds.
     loudness_range: LoudnessRange,
     /// Current frame's shared pane geometry, resolved from the window's rem size.
     geometry: Rc<Cell<PreviewGeometry>>,
@@ -284,7 +335,11 @@ impl WaveformView {
     /// Shows an analyzed record and attaches source warnings only while its file identity and waveform match.
     /// Warning attachment does not change input gain, cues, playback, or the visible range of the same overview.
     pub fn set_record(&mut self, record: &AnalysisRecord, cx: &mut Context<Self>) {
-        let source = (record.path.clone(), record.file_size, record.modified_time_ms);
+        let source = WaveformSource {
+            path: record.path.clone(),
+            file_size: record.file_size,
+            modified_time_ms: record.modified_time_ms,
+        };
         if self.source.as_ref() != Some(&source) {
             self.clear_spectrogram(cx);
         }
@@ -376,7 +431,7 @@ impl WaveformView {
     #[cfg(test)]
     pub fn waveform_source(&self) -> Option<&std::path::Path> {
         self.overview.as_ref()?;
-        self.source.as_ref().map(|(path, _, _)| path.as_path())
+        self.source.as_ref().map(|source| source.path.as_path())
     }
 
     /// Shows an overview without source warnings, for example for synthetic demo data.
@@ -496,7 +551,11 @@ impl WaveformView {
 
     /// Applies source-matched artifacts without touching transport, cue, gain, zoom or pending same-source gestures.
     fn update_record(&mut self, record: &AnalysisRecord) {
-        let source = (record.path.clone(), record.file_size, record.modified_time_ms);
+        let source = WaveformSource {
+            path: record.path.clone(),
+            file_size: record.file_size,
+            modified_time_ms: record.modified_time_ms,
+        };
         let same_source = self.source.as_ref() == Some(&source);
         let visible_start = self.visible_start;
         let pending_seek = self.pending_seek;
@@ -783,37 +842,67 @@ fn paint_placeholder(text: SharedString, plot: Bounds<Pixels>, window: &mut Wind
 /// Every column keeps at least one pixel of height, so silence shows as a line.
 /// With Serato colours each column is painted in its own colour, otherwise each envelope is one blue shape.
 fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
-    let Some(overview) = data.overview.as_deref() else {
+    let Some(overview_arc) = data.overview.as_ref() else {
         return;
     };
+    let overview = overview_arc.as_ref();
     let plot = viewport.plot;
     let columns = f32::from(plot.size.width) as usize;
     let channels = overview.channels().clamp(1, 2) as usize;
-    let lane_height = f32::from(plot.size.height) / channels as f32;
-    let half_height = lane_height * 0.5;
-    let half = (half_height - 1.0).max(0.5);
-    let sample_rate = f64::from(overview.sample_rate());
-    let start_frame = viewport.start * sample_rate;
-    let end_frame = (viewport.start + viewport.length) * sample_rate;
-    let colours = serato_column_colours(data, viewport, columns);
-
-    for channel in 0..channels {
-        let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
-        let center = lane_top + half_height;
-        let scale = |value: f32| (value * data.display_gain).clamp(-1.0, 1.0);
-        let mut extents = overview.column_peaks(channel, start_frame, end_frame, columns);
-        for (minimum, maximum) in &mut extents {
-            let top = scale(*maximum).mul_add(-half, center).min(center - 0.5);
-            let bottom = scale(*minimum).mul_add(-half, center).max(center + 0.5);
-            *minimum = top;
-            *maximum = bottom;
+    let key = CachedWaveformKey {
+        overview_ptr: Arc::as_ptr(overview_arc) as usize,
+        serato_ptr: data
+            .serato_overview
+            .as_ref()
+            .map_or(0, |serato| Arc::as_ptr(serato) as usize),
+        origin_x_bits: f32::from(plot.origin.x).to_bits(),
+        origin_y_bits: f32::from(plot.origin.y).to_bits(),
+        width_bits: f32::from(plot.size.width).to_bits(),
+        height_bits: f32::from(plot.size.height).to_bits(),
+        start_bits: viewport.start.to_bits(),
+        length_bits: viewport.length.to_bits(),
+        gain_bits: data.display_gain.to_bits(),
+    };
+    CACHED_PROJECTION.with_borrow_mut(|cache| {
+        let needs_recompute = cache.as_ref().is_none_or(|cached| cached.key != key);
+        if needs_recompute {
+            let lane_height = f32::from(plot.size.height) / channels as f32;
+            let half_height = lane_height * 0.5;
+            let half = (half_height - 1.0).max(0.5);
+            let sample_rate = f64::from(overview.sample_rate());
+            let start_frame = viewport.start * sample_rate;
+            let end_frame = (viewport.start + viewport.length) * sample_rate;
+            let colours = serato_column_colours(data, viewport, columns);
+            let scale = |value: f32| (value * data.display_gain).clamp(-1.0, 1.0);
+            let mut channel_extents = Vec::with_capacity(channels);
+            for channel in 0..channels {
+                let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
+                let center = lane_top + half_height;
+                let mut extents = overview.column_peaks(channel, start_frame, end_frame, columns);
+                for (minimum, maximum) in &mut extents {
+                    let top = scale(*maximum).mul_add(-half, center).min(center - 0.5);
+                    let bottom = scale(*minimum).mul_add(-half, center).max(center + 0.5);
+                    *minimum = top;
+                    *maximum = bottom;
+                }
+                channel_extents.push(extents);
+            }
+            *cache = Some(CachedWaveformProjection {
+                key,
+                channels: channel_extents,
+                colours,
+            });
         }
-        if colours.is_empty() {
-            paint_envelope(&extents, f32::from(plot.origin.x), window);
-        } else {
-            paint_coloured_columns(&extents, &colours, f32::from(plot.origin.x), window);
+        if let Some(cached) = cache.as_ref() {
+            for extents in &cached.channels {
+                if cached.colours.is_empty() {
+                    paint_envelope(extents, f32::from(plot.origin.x), window);
+                } else {
+                    paint_coloured_columns(extents, &cached.colours, f32::from(plot.origin.x), window);
+                }
+            }
         }
-    }
+    });
 }
 
 /// Returns the Serato colour of each plot column, or nothing when the file has no Serato Overview.

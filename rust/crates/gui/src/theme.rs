@@ -289,7 +289,7 @@ fn theme_config() -> ThemeConfig {
 }
 
 #[cfg(test)]
-mod tests {
+mod test_theme {
     use super::*;
 
     /// The typed configuration retains the application's typography and geometry.

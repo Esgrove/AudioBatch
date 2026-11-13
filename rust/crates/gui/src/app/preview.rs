@@ -306,12 +306,20 @@ impl AppView {
 }
 
 /// Returns callback ownership before another chain can lease the same native processors.
-/// Playback transport stays running, and the player's normal insert transition resets the replacement.
+/// Idle or paused streams settle immediately via control exclusion.
+/// Active streams get one short callback window before control exclusion reclaims the insert
+/// without blocking the UI for 250 ms.
 fn retire_player_insert(player: &mut Player) {
     let _ = player.set_insert(None);
-    let deadline = Instant::now() + DETACH_TIMEOUT;
-    while !player.is_insert_settled() && Instant::now() < deadline {
-        thread::sleep(DETACH_POLL_INTERVAL);
+    if !player.is_insert_settled() {
+        let deadline = Instant::now() + Duration::from_millis(25).min(DETACH_TIMEOUT);
+        while !player.is_insert_settled() && Instant::now() < deadline {
+            thread::sleep(DETACH_POLL_INTERVAL);
+        }
+        if !player.is_insert_settled() {
+            drop(player.flush_insert_changes());
+            return;
+        }
     }
     drop(player.take_retired_inserts());
 }

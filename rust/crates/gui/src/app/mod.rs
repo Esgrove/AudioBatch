@@ -95,7 +95,7 @@ const SECTION_SPACING: f32 = 6.0;
 const PREVIEW_MINIMUM_HEIGHT: f32 = 230.0;
 
 /// Startup options from the command line.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LaunchOptions {
     /// Files and folders to analyze at startup.
     pub paths: Vec<PathBuf>,
@@ -175,7 +175,10 @@ pub struct AppView {
     artwork_rewrites: HashSet<PathBuf>,
     /// Drains the active artwork read before starting its latest pending replacement.
     artwork_task: Option<Task<()>>,
+    /// Latest message shown in the bottom status bar.
     status: SharedString,
+    /// True when `status` holds an explicit user or error notice that background enrichment must not hide.
+    status_sticky: bool,
     /// Output text of the status bar at the last check, so a change in the buffer size renders again.
     shown_output: SharedString,
     /// Last formatted source time, avoiding whole-window redraws at every player poll.
@@ -367,6 +370,7 @@ impl AppView {
             artwork_rewrites: HashSet::new(),
             artwork_task: None,
             status,
+            status_sticky: false,
             shown_output: SharedString::default(),
             shown_playback_time: None,
             menu_state,
@@ -407,8 +411,9 @@ impl AppView {
         if let Some(rows) = options.demo_rows {
             view.start_demo(rows, cx);
         } else if !options.paths.is_empty() {
-            view.add_roots(&options.paths, cx);
+            view.handle_drop(&options.paths, false, cx);
         }
+        view.sync_action_menus(cx);
         view
     }
 
@@ -466,6 +471,49 @@ impl AppView {
         set_menus(cx, &self.menu_state);
         #[cfg(target_os = "windows")]
         self.menu_bar.update(cx, AppMenuBar::reload);
+    }
+
+    /// Synchronizes action enablement flags on the menu bar when selection, chain, or run state changes.
+    pub(super) fn sync_action_menus(&mut self, cx: &mut Context<Self>) {
+        let (has_selection, any_ready, any_processable) = {
+            let delegate = self.table.read(cx).delegate();
+            let has_selection = self.selected.is_some() || !delegate.selected_paths().is_empty();
+            let any_ready =
+                (0..delegate.len()).any(|index| delegate.row(index).is_some_and(|row| row.ready_record().is_some()));
+            let any_processable = (0..delegate.len()).any(|index| {
+                delegate
+                    .row(index)
+                    .and_then(|row| row.ready_record())
+                    .is_some_and(|record| (1..=2).contains(&record.channels))
+            });
+            (has_selection, any_ready, any_processable)
+        };
+        let file_operation_active = self.is_normalizing() || self.is_processing() || self.is_winding_down();
+        let can_normalize_selected = self.can_normalize_selected(cx);
+        let can_normalize_all = self.can_start_normalization() && any_ready;
+        let can_process_selected = self.can_process_selected(cx);
+        let can_process_all = self.can_start_processing() && any_processable;
+        let has_chain_slots = self.plugins.chain.len() > 0;
+        let can_cancel = self.is_analyzing() || self.is_normalizing() || self.is_processing();
+        if self.menu_state.file_operation_active != file_operation_active
+            || self.menu_state.has_selection != has_selection
+            || self.menu_state.can_normalize_selected != can_normalize_selected
+            || self.menu_state.can_normalize_all != can_normalize_all
+            || self.menu_state.can_process_selected != can_process_selected
+            || self.menu_state.can_process_all != can_process_all
+            || self.menu_state.has_chain_slots != has_chain_slots
+            || self.menu_state.can_cancel != can_cancel
+        {
+            self.menu_state.file_operation_active = file_operation_active;
+            self.menu_state.has_selection = has_selection;
+            self.menu_state.can_normalize_selected = can_normalize_selected;
+            self.menu_state.can_normalize_all = can_normalize_all;
+            self.menu_state.can_process_selected = can_process_selected;
+            self.menu_state.can_process_all = can_process_all;
+            self.menu_state.has_chain_slots = has_chain_slots;
+            self.menu_state.can_cancel = can_cancel;
+            self.refresh_menus(cx);
+        }
     }
 
     /// Points the waveform playhead at the current player.
@@ -584,8 +632,14 @@ fn initial_menu_state(
     table: &Entity<TableState<ResultsDelegate>>,
     cx: &Context<AppView>,
 ) -> MenuState {
+    let output_devices = if cfg!(test) {
+        Vec::new()
+    } else {
+        Player::output_device_names()
+    };
     MenuState {
         output_device: None,
+        output_devices,
         show_loudness_graph: settings.show_loudness_graph,
         preview_view_mode: settings.preview_view_mode,
         show_sample_overloads: settings.show_sample_overloads,
