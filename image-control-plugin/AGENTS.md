@@ -365,7 +365,8 @@ It requires both installed formats, so it is not a routine check.
   `./format.sh --check` only verifies them.
 - The root `../format.sh image-control` runs the same script,
   and the root `../format.sh --check` that CI runs includes it.
-- The pre-commit hooks in `../.pre-commit-config.yaml` also format the plugin's C++ and CMake files.
+- The pre-commit hooks in `../.pre-commit-config.yaml` also format the plugin's C++, CMake, and shell files,
+  and check its shell scripts with shellcheck.
 
 ## Linting
 

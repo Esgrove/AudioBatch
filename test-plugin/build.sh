@@ -2,7 +2,7 @@
 set -eo pipefail
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=../common.sh
+# shellcheck source=common.sh
 source "$DIR/../common.sh"
 
 # Builds the AudioBatch Test MS VST3 plugin, defaulting to Release mode in test-plugin/cmake-build-release,

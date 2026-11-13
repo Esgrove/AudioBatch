@@ -632,7 +632,7 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   and also checks the prose under `cpp/` with `slb` when it is installed.
   Check the prose in `../test-plugin/` and `../.agents/` separately.
 - `../.pre-commit-config.yaml` at the repository root runs clang-format, cmake-format, cargo fmt, ruff,
-  and basic file checks through [prek](https://prek.j178.dev).
+  shfmt, shellcheck, and basic file checks through [prek](https://prek.j178.dev).
 - CI runs the root `../format.sh --check`, which includes this directory, in `../.github/workflows/format.yml`.
 
 ## Linting

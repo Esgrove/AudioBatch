@@ -5,5 +5,5 @@ set -eo pipefail
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export REPO
 
-# shellcheck source=../common.sh
+# shellcheck source=common.sh
 source "$REPO/../common.sh"

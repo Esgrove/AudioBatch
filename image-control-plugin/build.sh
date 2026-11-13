@@ -2,7 +2,7 @@
 set -eo pipefail
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
+# shellcheck source=image-control-plugin/common.sh
 source "$DIR/common.sh"
 
 # Builds the ImageControl VST3 plugin, and on macOS its Audio Unit, defaulting to Release mode in image-control-plugin/cmake-build-release.

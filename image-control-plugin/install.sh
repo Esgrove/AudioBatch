@@ -2,7 +2,7 @@
 set -eo pipefail
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
+# shellcheck source=image-control-plugin/common.sh
 source "$DIR/common.sh"
 
 # Builds ImageControl with build.sh and installs the bundles into the user's plugin folders.

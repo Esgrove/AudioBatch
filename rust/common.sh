@@ -24,7 +24,7 @@ APPLICATION_PACKAGE_ARGS=(
 )
 
 # The root helpers define and export REPO_ROOT for all repository-level paths below.
-# shellcheck source=../common.sh
+# shellcheck source=common.sh
 source "$(dirname "$REPO")/common.sh"
 
 # The command line binary, which supports the completion subcommand.
