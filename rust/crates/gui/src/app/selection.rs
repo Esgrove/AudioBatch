@@ -172,8 +172,7 @@ impl AppView {
     pub(super) fn selected_ready_records(&self, cx: &App) -> Vec<AnalysisRecord> {
         let delegate = self.table.read(cx).delegate();
         delegate
-            .selected_paths()
-            .iter()
+            .selected_paths_iter()
             .filter_map(|path| delegate.row_for(path).and_then(|row| row.ready_record()).cloned())
             .collect()
     }
@@ -181,15 +180,11 @@ impl AppView {
     /// Returns all selected records when every selected row is ready, enforcing all-or-nothing normalization.
     pub(super) fn selected_normalizable_records(&self, cx: &App) -> Option<Vec<AnalysisRecord>> {
         let delegate = self.table.read(cx).delegate();
-        let selected = delegate.selected_paths();
-        if selected.is_empty() {
-            return None;
-        }
-        let mut records = Vec::with_capacity(selected.len());
-        for path in &selected {
-            records.push(delegate.row_for(path)?.ready_record()?.clone());
-        }
-        Some(records)
+        let mut selected = delegate.selected_paths_iter().peekable();
+        selected.peek()?;
+        selected
+            .map(|path| delegate.row_for(path)?.ready_record().cloned())
+            .collect()
     }
 
     /// Returns the selected ready records whose channel counts are supported by plugin chains (mono or stereo).

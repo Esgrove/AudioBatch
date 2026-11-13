@@ -893,15 +893,39 @@ impl ResultsDelegate {
     /// Returns the selected files, the app's selected file first and the others in row order.
     #[must_use]
     pub fn selected_paths(&self) -> Vec<PathBuf> {
-        if self.extra_selected.is_empty() {
-            return self.selected.iter().cloned().collect();
-        }
+        self.selected_paths_iter().map(Path::to_path_buf).collect()
+    }
+
+    /// Borrows selection identities in action order, skipping a table walk for an anchor-only selection.
+    pub fn selected_paths_iter(&self) -> impl Iterator<Item = &Path> {
         let extra = self
             .rows
             .iter()
+            .take(if self.extra_selected.is_empty() {
+                0
+            } else {
+                self.rows.len()
+            })
             .filter(|row| self.extra_selected.contains(&row.path))
-            .map(|row| row.path.clone());
-        self.selected.iter().cloned().chain(extra).collect()
+            .map(|row| row.path.as_path());
+        self.selected.as_deref().into_iter().chain(extra)
+    }
+
+    /// Requires a nonempty selection whose every identity still resolves to a ready record.
+    #[must_use]
+    pub fn selection_is_normalizable(&self) -> bool {
+        let mut selected = self.selected_paths_iter().peekable();
+        selected.peek().is_some() && selected.all(|path| self.row_for(path).and_then(ResultRow::ready_record).is_some())
+    }
+
+    /// Stops at the first selected ready mono or stereo record, without cloning action payloads.
+    #[must_use]
+    pub fn selection_is_processable(&self) -> bool {
+        self.selected_paths_iter().any(|path| {
+            self.row_for(path)
+                .and_then(ResultRow::ready_record)
+                .is_some_and(|record| (1..=2).contains(&record.channels))
+        })
     }
 
     /// Returns true when the file is selected, as the app's selected file or one of the others.
@@ -2196,6 +2220,71 @@ mod test_selection {
         let mut delegate = ResultsDelegate::new(1600.0);
         delegate.set_files(&paths.iter().map(PathBuf::from).collect::<Vec<_>>());
         delegate
+    }
+
+    /// Borrowed predicates agree with owned action collectors across empty, missing, mixed and reordered selections.
+    #[expect(
+        clippy::needless_collect,
+        reason = "The owned action payload is the independent comparison contract"
+    )]
+    #[test]
+    fn borrowed_eligibility_matches_selection_collectors() {
+        let mut delegate = delegate_with(&["/ready.wav", "/wide.wav", "/failed.wav", "/pending.wav"]);
+        for (path, status, channels) in [
+            ("/ready.wav", AnalysisStatus::Analyzed, 2),
+            ("/wide.wav", AnalysisStatus::Analyzed, 6),
+            ("/failed.wav", AnalysisStatus::Failed, 2),
+        ] {
+            delegate.set_record(AnalysisRecord {
+                path: path.into(),
+                status,
+                channels,
+                ..AnalysisRecord::default()
+            });
+        }
+        for anchor in [
+            None,
+            Some("/ready.wav"),
+            Some("/wide.wav"),
+            Some("/failed.wav"),
+            Some("/pending.wav"),
+            Some("/missing.wav"),
+        ] {
+            for select_all in [false, true] {
+                delegate.select_only(anchor.map(PathBuf::from));
+                if select_all {
+                    delegate.select_all();
+                }
+                for reverse in [false, true] {
+                    if reverse {
+                        delegate.rows.reverse();
+                        delegate.rebuild_index();
+                    }
+                    let selected = delegate.selected_paths();
+                    assert_eq!(
+                        delegate
+                            .selected_paths_iter()
+                            .map(Path::to_path_buf)
+                            .collect::<Vec<_>>(),
+                        selected
+                    );
+                    let normalized: Option<Vec<_>> = selected
+                        .iter()
+                        .map(|path| delegate.row_for(path)?.ready_record().cloned())
+                        .collect();
+                    assert_eq!(
+                        delegate.selection_is_normalizable(),
+                        !selected.is_empty() && normalized.is_some()
+                    );
+                    let processed: Vec<_> = selected
+                        .iter()
+                        .filter_map(|path| delegate.row_for(path)?.ready_record().cloned())
+                        .filter(|record| (1..=2).contains(&record.channels))
+                        .collect();
+                    assert_eq!(delegate.selection_is_processable(), !processed.is_empty());
+                }
+            }
+        }
     }
 
     /// Returns the selected paths as text, the file the preview plays first.

@@ -47,7 +47,7 @@ impl AppView {
     /// Returns true when the selected files can be normalized now.
     /// Normalization is all-or-nothing across a multi-selection.
     pub(super) fn can_normalize_selected(&self, cx: &Context<Self>) -> bool {
-        self.can_start_normalization() && self.selected_normalizable_records(cx).is_some()
+        self.can_start_normalization() && self.table.read(cx).delegate().selection_is_normalizable()
     }
 
     /// Returns true when a normalization could start now, whatever is selected.
