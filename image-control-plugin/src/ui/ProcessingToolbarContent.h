@@ -24,6 +24,7 @@ namespace test
 struct PresetWorkflowTestAccess;
 }
 class ImageControlProcessor;
+struct PresetPresentation;
 
 /// Disk operations never access mutable processor state or components.
 enum class PresetOperation : std::uint8_t {
@@ -160,10 +161,15 @@ public:
 private:
     friend struct test::PresetWorkflowTestAccess;
 
+    [[nodiscard]] static bool requestMatchesPresentation(
+        const PresetRequest& request,
+        const PresetPresentation& presentation
+    );
+
     [[nodiscard]] PresetRequest makeRequest(PresetOperation operation) const;
     [[nodiscard]] juce::PopupMenu buildPresetMenu() const;
     [[nodiscard]] juce::String currentPresetName() const;
-    [[nodiscard]] juce::String libraryFeedback() const;
+    [[nodiscard]] juce::String libraryFeedback(const PresetPresentation& presentation) const;
     [[nodiscard]] bool canInteract() const;
     [[nodiscard]] bool canSave() const;
     [[nodiscard]] bool requestIsCurrent(const PresetRequest& request) const;
@@ -196,6 +202,7 @@ private:
     void showError(const juce::String& message);
     void showPresetMenu();
     void updatePresetSelector();
+    void updatePresetSelector(const PresetPresentation& presentation);
 
     /// The owning processor outlives this component and the independent disk work joined by its destructor.
     ImageControlProcessor& processor;
@@ -238,6 +245,18 @@ private:
     juce::String pendingOperation;
     /// Last programmatically displayed selector text, preserving pending user selection notifications.
     std::optional<juce::String> shownPresetText;
+    /// Last selector accessible title applied during refresh.
+    juce::String shownSelectorTitle;
+    /// Last selector accessible description applied during refresh.
+    juce::String shownSelectorDescription;
+    /// Last selector tooltip applied during refresh.
+    juce::String shownSelectorTooltip;
+    /// Last preset-menu tooltip applied during refresh.
+    juce::String shownMenuTooltip;
+    /// Last active-slot presentation applied to the A/B controls.
+    std::optional<bool> shownSlotA;
+    /// Last error-outline state applied to the selector.
+    std::optional<bool> shownSelectorError;
     /// Captured processor identity prevents drafts from leaking across recall or comparison transitions.
     std::optional<PresetRequest> nameEditContext;
     /// Raw input never contains the presentation-only modified marker.

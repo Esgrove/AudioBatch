@@ -57,8 +57,14 @@ void TooltipOverlay::advance(const double seconds)
 {
     const auto source = juce::Desktop::getInstance().getMainMouseSource();
     const auto pointer = source.getScreenPosition();
+    if (!pointerInitialized) {
+        lastPointer = pointer;
+        pointerInitialized = true;
+    }
     const bool moved = pointer.getDistanceFrom(lastPointer) > MOVE_THRESHOLD;
-    lastPointer = pointer;
+    if (moved) {
+        lastPointer = pointer;
+    }
     if (juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown()) {
         suppressed = true;
     } else if (moved) {

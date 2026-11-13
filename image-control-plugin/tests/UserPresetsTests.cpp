@@ -722,5 +722,25 @@ TEST_F(UserPresetsTest, TwoInstancesSerializeCombinedUpdateNameCollisions)
     }
     EXPECT_EQ(directory.findChildFiles(juce::File::findFiles, false).size(), 2);
 }
+
+TEST_F(UserPresetsTest, ExportAllowsSymlinkedParentDirectoryAndUnrelatedSiblingStems)
+{
+    const auto saved = library.saveAs("MixBus", sound());
+    ASSERT_TRUE(saved.has_value());
+    const auto exportFolder = root.getChildFile("exports");
+    ASSERT_TRUE(exportFolder.createDirectory().wasOk());
+    ASSERT_TRUE(exportFolder.getChildFile("MixBus.wav").replaceWithText("audio"));
+
+    const auto directExport = exportFolder.getChildFile("MixBus.xml");
+    EXPECT_TRUE(library.exportPreset(*saved, directExport).wasOk());
+    EXPECT_TRUE(library.exportPreset(*saved, exportFolder.getChildFile("mixbus.xml")).failed());
+
+    const auto symlinkedParent = root.getChildFile("exports-link");
+    if (exportFolder.createSymbolicLink(symlinkedParent, false)) {
+        const auto viaSymlink = symlinkedParent.getChildFile("SecondExport.xml");
+        EXPECT_TRUE(library.exportPreset(*saved, viaSymlink).wasOk());
+        EXPECT_TRUE(exportFolder.getChildFile("SecondExport.xml").existsAsFile());
+    }
+}
 }  // namespace
 }  // namespace esgrove::image_control::test

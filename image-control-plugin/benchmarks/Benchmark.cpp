@@ -181,7 +181,7 @@ int boundedInteger(const std::string_view text, const int minimum, const int max
 Options parseOptions(const std::span<const std::string_view> arguments)
 {
     Options options;
-    if (std::ranges::find(arguments, "--quick") != arguments.end()) {
+    if (std::ranges::contains(arguments, "--quick")) {
         options.callbacks = QUICK_CALLBACKS;
         options.repetitions = QUICK_REPETITIONS;
         options.refreshes = REFRESH_RATE;
@@ -246,6 +246,7 @@ void printHelp()
   --no-worker       Skip concurrent analysis rows, retaining the always-drained FIFO reference
   --refresh-settings-only
                     Only peerless editor settings refresh, with the worker stopped
+  -h, --help        Show this help and exit
 Measurements require Release with -DAUDIOBATCH_NATIVE_CPU=ON. CI builds support --help only.
 Keep hardware, background load, compiler flags, and hardening identical across comparisons.)"
         "\n"
@@ -262,7 +263,7 @@ int main(const int argc, char* argv[])
         for (const auto* argument : std::span(argv, static_cast<std::size_t>(argc)).subspan(1)) {
             arguments.emplace_back(argument);
         }
-        if (std::ranges::find(arguments, "--help") != arguments.end()) {
+        if (std::ranges::contains(arguments, "--help") || std::ranges::contains(arguments, "-h")) {
             esgrove::image_control::benchmark::printHelp();
             return 0;
         }

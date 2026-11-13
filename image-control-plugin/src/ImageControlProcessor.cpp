@@ -6,6 +6,7 @@
 
 #include "analysis/StereoSampleFifo.h"
 #include "dsp/BandCorrelation.h"
+#include "dsp/CrossoverDesign.h"
 #include "dsp/MultibandImager.h"
 #include "ImageControlEditor.h"
 #include "Parameters.h"
@@ -17,6 +18,7 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -39,6 +41,15 @@ constexpr auto EDITOR_STATE_TAG {"EditorState"};
 /// Independent optional host-state siblings must never reach the APVTS parameter tree.
 constexpr auto COMPARISON_STATE_TAG {"ComparisonState"};
 constexpr auto PRESET_PROVENANCE_STATE_TAG {"PresetProvenanceState"};
+
+/// Monotonic 64-bit millisecond clock clamped above zero so zero stays the unpublished sentinel.
+std::uint64_t monotonicMilliseconds() noexcept
+{
+    const auto ticks
+        = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+              .count();
+    return ticks > 0 ? static_cast<std::uint64_t>(ticks) : std::uint64_t {1};
+}
 
 /// Captures a detached host parameter tree, including defaults for parameters absent from legacy state.
 /// Unlike reading atomics, this also sees the complete target during a synchronous reentrant restore save.
@@ -590,7 +601,8 @@ BandCorrelationSnapshot ImageControlProcessor::getBandCorrelationSnapshot() cons
 {
     const auto generation = correlationGeneration.load(std::memory_order_acquire);
     const auto updated = correlationUpdateMilliseconds.load(std::memory_order_acquire);
-    const auto age = juce::Time::getMillisecondCounter() - updated;
+    const auto now = monotonicMilliseconds();
+    const auto age = now >= updated ? now - updated : std::uint64_t {0};
     if (!correlationEnabled.load(std::memory_order_relaxed) || updated == 0
         || publishedCorrelationGeneration.load(std::memory_order_acquire) != generation
         || age > correlationExpiryMilliseconds.load(std::memory_order_relaxed))
@@ -620,7 +632,7 @@ Crossovers ImageControlProcessor::getCrossovers() const
 {
     Crossovers crossovers {};
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        crossovers.at(crossover) = crossoverValues.at(crossover).get().load();
+        crossovers.at(crossover) = crossoverValues.at(crossover).get().load(std::memory_order_relaxed);
     }
     return orderCrossovers(crossovers);
 }
@@ -719,29 +731,33 @@ void ImageControlProcessor::getStateInformation(juce::MemoryBlock& destinationDa
 /// and reports its latency to the host.
 void ImageControlProcessor::prepareToPlay(const double sampleRate, const int maximumBlockSize)
 {
-    updateProcessingTargets(bypassValue.load() >= 0.5F);
-    imager.prepare(sampleRate, getTotalNumOutputChannels(), getCrossovers());
-    analyzerFifo.setSampleRate(sampleRate);
+    const double validSampleRate = std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : REFERENCE_SAMPLE_RATE;
+    updateProcessingTargets(bypassValue.load(std::memory_order_relaxed) >= 0.5F);
+    imager.prepare(validSampleRate, getTotalNumOutputChannels(), getCrossovers());
+    analyzerFifo.setSampleRate(validSampleRate);
     analyzerFifo.beginEpoch();
     constexpr double millisecondsPerSecond {1000.0};
-    constexpr std::uint32_t minCorrelationExpiryMilliseconds {250};
-    const auto blockExpiry = static_cast<std::uint32_t>(
-        std::ceil(static_cast<double>(std::max(maximumBlockSize, 0)) * 2.0 * millisecondsPerSecond / sampleRate)
-    );
+    constexpr std::uint64_t minCorrelationExpiryMilliseconds {250};
+    constexpr double maxCorrelationExpiryMilliseconds {60'000.0};
+    const double rawExpiry
+        = std::ceil(static_cast<double>(std::max(maximumBlockSize, 0)) * 2.0 * millisecondsPerSecond / validSampleRate);
+    const auto blockExpiry = std::isfinite(rawExpiry) && rawExpiry > 0.0
+        ? static_cast<std::uint64_t>(std::min(rawExpiry, maxCorrelationExpiryMilliseconds))
+        : std::uint64_t {0};
     correlationExpiryMilliseconds.store(
         std::max(minCorrelationExpiryMilliseconds, blockExpiry), std::memory_order_relaxed
     );
     correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
     correlationUpdateMilliseconds.store(0, std::memory_order_release);
-    monoSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
-    monoSmoother.setCurrentAndTargetValue(monoValue.load() >= 0.5F ? 1.0F : 0.0F);
+    monoSmoother.reset(validSampleRate, GAIN_SMOOTHING_SECONDS);
+    monoSmoother.setCurrentAndTargetValue(monoValue.load(std::memory_order_relaxed) >= 0.5F ? 1.0F : 0.0F);
     setLatencySamples(imager.getLatencySamples());
 }
 
 /// Processes a block with the current parameters, bypassed when the bypass parameter is on.
 void ImageControlProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/)
 {
-    processWithBypass(buffer, bypassValue.load() >= 0.5F);
+    processWithBypass(buffer, bypassValue.load(std::memory_order_relaxed) >= 0.5F);
 }
 
 /// Processes a block bypassed when a host bypasses the plugin without the bypass parameter.
@@ -770,7 +786,7 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     updateProcessingTargets(bypassed);
     Crossovers rawCrossovers {};
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        rawCrossovers[crossover] = crossoverValues[crossover].get().load();
+        rawCrossovers[crossover] = crossoverValues[crossover].get().load(std::memory_order_relaxed);
     }
     imager.setCrossovers(rawCrossovers, isNonRealtime());
     const auto meterGeneration = correlationGeneration.load(std::memory_order_acquire);
@@ -793,7 +809,7 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     }
     if (meterEnabled && buffer.getNumSamples() > 0) {
         publishedCorrelationGeneration.store(meterGeneration, std::memory_order_release);
-        correlationUpdateMilliseconds.store(juce::Time::getMillisecondCounter(), std::memory_order_release);
+        correlationUpdateMilliseconds.store(monotonicMilliseconds(), std::memory_order_release);
     }
 }
 
@@ -806,15 +822,15 @@ void ImageControlProcessor::updateProcessingTargets(const bool bypassed)
     raw.widths.fill(1.0F);
     if (!bypassed) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-            raw.solos[band] = soloValues[band].get().load() >= 0.5F;
-            raw.mid[band] = midGainValues[band].get().load();
-            raw.side[band] = sideGainValues[band].get().load();
-            raw.pans[band] = panValues[band].get().load();
-            raw.widths[band] = widthValues[band].get().load();
-            raw.recoveries[band] = recoverValues[band].get().load();
+            raw.solos[band] = soloValues[band].get().load(std::memory_order_relaxed) >= 0.5F;
+            raw.mid[band] = midGainValues[band].get().load(std::memory_order_relaxed);
+            raw.side[band] = sideGainValues[band].get().load(std::memory_order_relaxed);
+            raw.pans[band] = panValues[band].get().load(std::memory_order_relaxed);
+            raw.widths[band] = widthValues[band].get().load(std::memory_order_relaxed);
+            raw.recoveries[band] = recoverValues[band].get().load(std::memory_order_relaxed);
         }
-        raw.output = outputGainValue.load();
-        raw.delta = deltaValue.load() >= 0.5F;
+        raw.output = outputGainValue.load(std::memory_order_relaxed);
+        raw.delta = deltaValue.load(std::memory_order_relaxed) >= 0.5F;
     }
     bool gainsChanged = false;
     bool pansChanged = false;
@@ -893,7 +909,7 @@ void ImageControlProcessor::updateProcessingTargets(const bool bypassed)
 /// Mono follows Delta and bypass and applies identically to real-time and offline output.
 void ImageControlProcessor::applyMono(juce::AudioBuffer<float>& buffer)
 {
-    monoSmoother.setTargetValue(monoValue.load() >= 0.5F ? 1.0F : 0.0F);
+    monoSmoother.setTargetValue(monoValue.load(std::memory_order_relaxed) >= 0.5F ? 1.0F : 0.0F);
     if (buffer.getNumChannels() < 2) {
         monoSmoother.skip(buffer.getNumSamples());
         return;
@@ -922,10 +938,10 @@ void ImageControlProcessor::reset()
 {
     correlationUpdateMilliseconds.store(0, std::memory_order_release);
     correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
-    updateProcessingTargets(bypassValue.load() >= 0.5F);
+    updateProcessingTargets(bypassValue.load(std::memory_order_relaxed) >= 0.5F);
     imager.reset();
     analyzerFifo.beginEpoch();
-    monoSmoother.setCurrentAndTargetValue(monoValue.load() >= 0.5F ? 1.0F : 0.0F);
+    monoSmoother.setCurrentAndTargetValue(monoValue.load(std::memory_order_relaxed) >= 0.5F ? 1.0F : 0.0F);
 }
 
 /// Stops the imager's design thread.
