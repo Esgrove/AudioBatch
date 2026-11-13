@@ -491,7 +491,7 @@ impl AppView {
     pub(super) fn sync_action_menus(&mut self, cx: &mut Context<Self>) {
         let (has_selection, any_ready, any_processable) = {
             let delegate = self.table.read(cx).delegate();
-            let has_selection = self.selected.is_some() || !delegate.selected_paths().is_empty();
+            let has_selection = self.selected.is_some() || delegate.selected_paths_iter().next().is_some();
             let any_ready =
                 (0..delegate.len()).any(|index| delegate.row(index).is_some_and(|row| row.ready_record().is_some()));
             let any_processable = (0..delegate.len()).any(|index| {

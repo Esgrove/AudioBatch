@@ -47,7 +47,7 @@ impl AppView {
 
     /// Returns true when the selected files include at least one analyzed mono or stereo file.
     pub(super) fn can_process_selected(&self, cx: &Context<Self>) -> bool {
-        self.can_start_processing() && !self.selected_processable_records(cx).is_empty()
+        self.can_start_processing() && self.table.read(cx).delegate().selection_is_processable()
     }
 
     /// Returns true when plugin processing could start now, with an enabled plugin, whatever is selected.
