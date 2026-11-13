@@ -465,7 +465,9 @@ sign_mac_plugin_bundle() {
 
 # Submit a signed macOS .pkg, bundle (.app/.vst3/.component), or CLI binary to Apple's notary service and wait.
 # Pass --staple as the second argument to staple the notarization ticket to bundles and .pkg installers.
-notarize_mac_artifact() {
+notarize_mac_artifact() (
+    # Credentials must never reach shell traces. The subshell preserves the caller's tracing state on every exit.
+    set +x
     local artifact="$1"
     local staple_flag="${2:-}"
     if [ "$BASH_PLATFORM" != mac ]; then
@@ -547,7 +549,7 @@ notarize_mac_artifact() {
             ;;
     esac
     print_green "Notarized: $artifact"
-}
+)
 
 # Validate an Apple Silicon target CPU name for macOS distribution builds.
 # Pass "true" as the second argument when validating for rustc as well as Apple Clang.
