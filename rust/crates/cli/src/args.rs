@@ -182,7 +182,7 @@ pub struct ProcessArgs {
     pub jobs: Option<usize>,
 
     /// Sort by peak, lufs, name, or path
-    #[arg(short = 's', long, default_value = "peak", value_parser = parse_sort_mode)]
+    #[arg(short = 's', long, value_name = "MODE", default_value = "peak", value_parser = parse_sort_mode)]
     pub sort: SortMode,
 
     /// Sort in descending order
@@ -190,30 +190,8 @@ pub struct ProcessArgs {
     pub reverse: bool,
 
     /// Print results as table, csv, or json
-    #[arg(short = 'o', long, value_enum, ignore_case = true, default_value_t = OutputFormat::Table)]
+    #[arg(short = 'o', long, value_enum, ignore_case = true, value_name = "FORMAT", default_value_t = OutputFormat::Table)]
     pub output: OutputFormat,
-}
-
-impl ProcessArgs {
-    /// Supplies common analysis and pre-chain normalization options without conflating output replacement.
-    #[must_use]
-    pub fn analysis_args(&self) -> CliArgs {
-        CliArgs {
-            command: None,
-            paths: self.paths.clone(),
-            recurse: self.recurse,
-            refresh: self.refresh,
-            normalize: self.normalize,
-            force: false,
-            delete: false,
-            peak: self.peak.clone(),
-            lufs: self.lufs.clone(),
-            jobs: self.jobs,
-            sort: self.sort,
-            reverse: self.reverse,
-            output: self.output,
-        }
-    }
 }
 
 /// Options of the `list` subcommand.
@@ -281,6 +259,28 @@ impl CliArgs {
             (None, None) => {}
         }
         Ok(Some(options))
+    }
+}
+
+impl ProcessArgs {
+    /// Supplies common analysis and pre-chain normalization options without conflating output replacement.
+    #[must_use]
+    pub fn analysis_args(&self) -> CliArgs {
+        CliArgs {
+            command: None,
+            paths: self.paths.clone(),
+            recurse: self.recurse,
+            refresh: self.refresh,
+            normalize: self.normalize,
+            force: false,
+            delete: false,
+            peak: self.peak.clone(),
+            lufs: self.lufs.clone(),
+            jobs: self.jobs,
+            sort: self.sort,
+            reverse: self.reverse,
+            output: self.output,
+        }
     }
 }
 

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::Result;
 use audiobatch_cli::args::{CliArgs, CliCommand, PluginListing};
 use audiobatch_cli::completion::generate_shell_completion;
-use audiobatch_cli::plugin_list::{PluginListContext, run_plugin_list};
+use audiobatch_cli::plugin_list::{PluginListContext, run_plugin_list_cancellable};
 use audiobatch_cli::run::{EXIT_INTERRUPTED, EXIT_USAGE_ERROR, run_analysis};
 use audiobatch_cli::{write_error, write_warning};
 use audiobatch_core::AnalysisCache;
@@ -36,7 +36,7 @@ fn main() -> ExitCode {
     }
 
     if let Err(error) = audiobatch_core::storage::StoragePaths::from_environment() {
-        eprintln!("{error}");
+        let _ = write_error!(&mut io::stderr(), "{error:#}");
         return ExitCode::from(EXIT_USAGE_ERROR);
     }
 
@@ -88,6 +88,11 @@ fn main() -> ExitCode {
             };
         }
         Some(CliCommand::List(listing)) => {
+            if listing.rescan
+                && let Err(error) = ctrlc::set_handler(handle_interrupt)
+            {
+                let _ = write_warning!(&mut log, "Ctrl-C may leave a scan worker running: {error}");
+            }
             return match list_plugins(*listing, &mut output, &mut log) {
                 Ok(code) => ExitCode::from(code),
                 Err(error) => {
@@ -184,5 +189,5 @@ fn list_plugins(listing: PluginListing, output: &mut dyn Write, log: &mut dyn Wr
         worker: WorkerCommand::current_executable()?,
         show_progress: io::stderr().is_terminal(),
     };
-    run_plugin_list(listing, &context, output, log)
+    run_plugin_list_cancellable(listing, &context, output, log, &|| INTERRUPTED.load(Ordering::SeqCst))
 }
