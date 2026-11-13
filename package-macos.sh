@@ -8,7 +8,7 @@ source "$DIR/common.sh"
 USAGE="Usage: $0 [cpp|rust|image-control] [OPTIONS]
 
 Build macOS .pkg distribution installers for C++ AudioBatch, Rust AudioBatchRs, and C++ ImageControl
-(Apple Silicon arm64, macOS 15.0+, targeting apple-m1 by default).
+(Apple Silicon arm64, macOS 15.0+, fixed apple-m1 baseline).
 Writes AudioBatch-<version>.pkg, AudioBatchRs-<version>.pkg, and ImageControl-<version>.pkg to dist/macos/.
 Name cpp, rust, or image-control to build only that installer.
 
@@ -21,7 +21,7 @@ OPTIONS: All options are optional
         Directory for the generated .pkg files. Defaults to dist/macos in the repository root.
 
     -m | --target-cpu <cpu>
-        Apple Silicon target CPU baseline. Defaults to 'apple-m1'.
+        Compatibility option. Only 'apple-m1' is accepted. Distribution always targets M1 and newer.
 
     -c | --clean
         Clean isolated dist CMake build directories before configuring.

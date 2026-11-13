@@ -23,7 +23,7 @@ OPTIONS: All options are optional
         Directory for the generated .pkg file. Defaults to dist/macos in the repository root.
 
     -m | --target-cpu <cpu>
-        Apple Silicon target CPU baseline. Defaults to 'apple-m1' (compatible with M1 through M6).
+        Compatibility option. Only 'apple-m1' is accepted. Distribution always targets M1 and newer.
 
     -c | --clean
         Delete the isolated dist CMake build directory before configuring.
@@ -116,11 +116,8 @@ parse_arguments() {
         print_error_and_exit "--clean cannot be combined with --reuse or --no-build."
     fi
 
-    local dist_suffix=""
-    if [ "$TARGET_CPU" != "apple-m1" ]; then
-        dist_suffix="-$TARGET_CPU"
-    fi
-    BUILD_DIR="$REPO/cmake-build-mac-dist${dist_suffix}"
+    require_mac_dist_cpu "$TARGET_CPU"
+    BUILD_DIR="$REPO/cmake-build-mac-dist"
     export CCACHE_DIR="$BUILD_DIR/ccache"
 }
 
@@ -142,16 +139,8 @@ build_dist_artifacts() {
     fi
 
     if [ "$REUSE_BUILD_DIR" = true ]; then
-        if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
-            print_error_and_exit "No dist CMake build directory to reuse at $BUILD_DIR"
-        fi
+        require_mac_dist_cmake_cache "$BUILD_DIR"
     else
-        local native_cpu=OFF
-        local target_cpu_value="$TARGET_CPU"
-        if [ "$TARGET_CPU" = "native" ]; then
-            native_cpu=ON
-            target_cpu_value=""
-        fi
         print_magenta "Configuring C++ AudioBatch dist build ($TARGET_CPU, arm64, macOS 15.0)..."
         cmake -S "$REPO" -B "$BUILD_DIR" -G Ninja \
             -DCMAKE_C_COMPILER=clang \
@@ -159,8 +148,8 @@ build_dist_artifacts() {
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-            -DAUDIOBATCH_NATIVE_CPU="$native_cpu" \
-            -DAUDIOBATCH_TARGET_CPU="$target_cpu_value" \
+            -DAUDIOBATCH_NATIVE_CPU=OFF \
+            -DAUDIOBATCH_TARGET_CPU=apple-m1 \
             -DBUILD_TESTING=OFF
     fi
 
@@ -229,6 +218,7 @@ package_cpp_macos() {
     if [ "$NO_BUILD" = false ]; then
         build_dist_artifacts
     fi
+    require_mac_dist_cmake_cache "$BUILD_DIR"
 
     local app_source="$BUILD_DIR/AudioBatch_artefacts/Release/AudioBatch.app"
     local cli_source="$BUILD_DIR/AudioBatchCli_artefacts/Release/audiobatch"
@@ -241,11 +231,9 @@ package_cpp_macos() {
 
     local version
     version=$(get_cpp_version)
-    local cpu_suffix=""
-    if [ "$TARGET_CPU" != "apple-m1" ]; then
-        cpu_suffix="-$TARGET_CPU"
-    fi
-    local output_pkg="$OUTPUT_DIR/AudioBatch-${version}${cpu_suffix}.pkg"
+    verify_mac_dist_artifact "$BUILD_DIR/app-m1.sha256" "$app_source" "$version" "$NO_BUILD"
+    verify_mac_dist_artifact "$BUILD_DIR/cli-m1.sha256" "$cli_source" "$version" "$NO_BUILD"
+    local output_pkg="$OUTPUT_DIR/AudioBatch-${version}.pkg"
 
     local work_dir
     work_dir=$(mktemp -d "${TMPDIR:-/tmp}/audiobatch-cpp-pkg.XXXXXXXX")

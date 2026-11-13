@@ -569,6 +569,58 @@ validate_mac_target_cpu() {
     fi
 }
 
+# Accept the historical CPU option only for the fixed distribution baseline.
+require_mac_dist_cpu() {
+    [ "$1" = apple-m1 ] || print_error_and_exit "Distribution installers target apple-m1 only. Use build.sh for native builds."
+}
+
+# Refuse cached CMake configurations that could silently reuse native or incompatible distribution targets.
+require_mac_dist_cmake_cache() {
+    local cache="$1/CMakeCache.txt" entry key value
+    [ -f "$cache" ] || print_error_and_exit "Missing distribution configuration. Rebuild without --reuse or --no-build."
+    for entry in \
+        'CMAKE_BUILD_TYPE=Release' \
+        'CMAKE_OSX_ARCHITECTURES=arm64' \
+        'CMAKE_OSX_DEPLOYMENT_TARGET=15.0' \
+        'AUDIOBATCH_NATIVE_CPU=OFF' \
+        'AUDIOBATCH_TARGET_CPU=apple-m1'; do
+        key="${entry%%=*}"
+        value=$(awk -F= -v key="$key" '$1 ~ "^" key ":[A-Z_]+$" { print substr($0, index($0, "=") + 1) }' "$cache")
+        if [ "$value" != "${entry#*=}" ]; then
+            print_error_and_exit "Incompatible distribution configuration: $entry. Rebuild without --reuse or --no-build."
+        fi
+    done
+}
+
+# Hash the exact build artifact, including all bundle resources and symlinks, before staging changes its signature.
+mac_dist_artifact_hash() {
+    local artifact="$1"
+    if [ -d "$artifact" ]; then
+        COPYFILE_DISABLE=1 /usr/bin/tar -cf - -C "$artifact" . | shasum -a 256 | cut -d ' ' -f 1
+    elif [ -f "$artifact" ]; then
+        shasum -a 256 "$artifact" | cut -d ' ' -f 1
+    else
+        print_error "Distribution artifact is missing: $artifact"
+        return 1
+    fi
+}
+
+# Record a successful fixed-baseline build or require its unchanged bytes when packaging without a build.
+# Arguments: <stamp> <artifact> <version> <no-build>
+verify_mac_dist_artifact() {
+    local stamp="$1" artifact="$2" version="$3" no_build="$4" identity stored
+    identity="arm64 apple-m1 macOS-15.0 Release $version $(mac_dist_artifact_hash "$artifact")" || return
+    if [ "$no_build" = true ]; then
+        stored=""
+        if [ -f "$stamp" ]; then
+            IFS= read -r stored < "$stamp" || true
+        fi
+        [ "$stored" = "$identity" ] || print_error_and_exit "Unverified or changed distribution artifact: $artifact. Rebuild without --no-build."
+    else
+        printf '%s\n' "$identity" > "$stamp"
+    fi
+}
+
 # Build a non-relocatable macOS component .pkg for a staged root containing one bundle (.app, .vst3, or .component).
 # Disabling BundleIsRelocatable prevents macOS Installer from redirecting installs into a developer's build folder.
 build_mac_bundle_component_pkg() {

@@ -38,6 +38,8 @@ Options passed to both applications must be supported by both scripts.
 On macOS,
 `./package-macos.sh` builds Apple Silicon `.pkg` distribution installers in `dist/macos/` with customizable App/CLI
 and VST3/Audio Unit checkboxes, supporting `--sign` and `--notarize`.
+Distribution has a fixed `apple-m1` baseline. Local builds remain native.
+`--no-build` requires unchanged artifacts from a successful distribution build, not local build outputs.
 
 ## Formats And Compatibility
 
