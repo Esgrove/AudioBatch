@@ -364,7 +364,11 @@ fn show_warning(message: &str, window: &mut Window, cx: &mut Context<AppView>) {
 
 /// Drains the processing events on a timer and applies them to the view in batches.
 /// It runs in the window, because the end of a run can show a dialog.
-fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx: &Context<AppView>) -> Task<()> {
+pub(super) fn spawn_process_drain(
+    receiver: Receiver<ProcessingEvent>,
+    window: &Window,
+    cx: &Context<AppView>,
+) -> Task<()> {
     cx.spawn_in(window, async move |this, cx| {
         loop {
             let super::analysis::DrainedEvents { batch, disconnected } = drain_events(&receiver);
@@ -378,6 +382,7 @@ fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx:
             if disconnected {
                 let _ = this.update(cx, |view, cx| {
                     finish_drain(&mut view.process_run, &mut view.process_winding_down);
+                    view.sync_action_menus(cx);
                     view.artwork_rewrites.clear();
                     view.refresh_artwork(cx);
                     view.resume_enrichment(cx);
