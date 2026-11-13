@@ -551,21 +551,15 @@ notarize_mac_artifact() (
     print_green "Notarized: $artifact"
 )
 
-# Validate an Apple Silicon target CPU name for macOS distribution builds.
-# Pass "true" as the second argument when validating for rustc as well as Apple Clang.
-validate_mac_target_cpu() {
-    local target_cpu="$1"
-    local check_rustc="${2:-false}"
-    case "$target_cpu" in
-        apple-m1 | apple-m2 | apple-m3 | apple-m4 | apple-m5 | apple-m6 | native) ;;
-        *)
-            print_error_and_exit "Unsupported --target-cpu '$target_cpu'. Expected apple-m1..apple-m6 or native."
-            ;;
-    esac
-    if [ "$check_rustc" = true ] && [ "$target_cpu" != "native" ] && command -v rustc > /dev/null 2>&1; then
-        if rustc --target aarch64-apple-darwin --print cfg -C "target-cpu=$target_cpu" 2>&1 | grep -Fq "not a recognized processor"; then
-            print_error_and_exit "Installed rustc does not support --target-cpu '$target_cpu' yet (apple-m1 is recommended)."
-        fi
+# Require compiler support for the fixed M1 distribution baseline without an early-exiting output pipeline.
+require_mac_dist_rustc() {
+    require_command rustc
+    local configuration
+    if ! configuration=$(rustc --target aarch64-apple-darwin --print cfg -C target-cpu=apple-m1 2>&1); then
+        print_error_and_exit "Cannot check Rust M1 distribution support: $configuration"
+    fi
+    if [[ "$configuration" == *"not a recognized processor"* ]]; then
+        print_error_and_exit "Installed rustc does not support the required apple-m1 distribution baseline."
     fi
 }
 

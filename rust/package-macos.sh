@@ -183,7 +183,7 @@ package_rust_macos() {
     if [ "$BASH_PLATFORM" != mac ]; then
         print_error_and_exit "macOS .pkg packaging is only supported on macOS."
     fi
-    validate_mac_target_cpu "$TARGET_CPU" true
+    require_mac_dist_rustc
     require_command pkgbuild
     require_command productbuild
     require_command plutil
