@@ -2227,6 +2227,76 @@ async fn integration_preview_context_menu_checks_modes_and_routes_keyboard_to_ro
     );
 }
 
+/// Explicit seeks use the production reload transition even without audio hardware, rejecting delayed old tags.
+#[gpui_kit::test]
+async fn integration_explicit_seek_reloads_selected_source_consumers(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("serato_rainbow_stereo_44100_16.aif", "seek.aif");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    workflow.preview(&source, cx).await;
+    workflow.dispatch(TogglePlayFromFirstCuePoint, cx);
+    workflow.scroll_preview(point(px(0.0), px(40.0)), Modifiers::default(), cx);
+    let old_token = cx.read(|cx| workflow.view.read(cx).preview_source.token().expect("source token"));
+    let zoom = cx.read(|cx| workflow.view.read(cx).waveform.read(cx).zoom());
+    let delayed = cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            let old_tags = Arc::new(audiobatch_core::FileTags::default());
+            view.delayed_tags(old_tags, cx)
+        })
+    });
+    let events = WaveformEvents::subscribe(&workflow, cx);
+    let plot = workflow.plots(cx)[0];
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.pointer_down(plot_point(plot, 0.5), MouseButton::Left, cx);
+        window.pointer_up(plot_point(plot, 0.5), MouseButton::Left, cx);
+    })
+    .expect("explicit unloaded-source seek");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            assert!(!view.preview_source.accepts(&old_token));
+            assert!(
+                view.start_after_cues.is_none(),
+                "explicit seconds do not become cue-start intent"
+            );
+            assert!((view.waveform.read(cx).zoom() - zoom).abs() < f64::EPSILON);
+            let current = view.selected_tags.as_ref().map(|(_, tags)| Arc::clone(tags));
+            delayed(view, cx);
+            assert_eq!(
+                view.selected_tags.as_ref().map(|(_, tags)| Arc::as_ptr(tags)),
+                current.as_ref().map(Arc::as_ptr),
+                "previous load cannot publish tags"
+            );
+        });
+    });
+    assert_eq!(events.events.borrow().len(), 1);
+    workflow.preview(&source, cx).await;
+    let old_token = cx.read(|cx| workflow.view.read(cx).preview_source.token().expect("second token"));
+    let plot = workflow.plots(cx)[0];
+    fs::copy(test_fixtures::fixture("sine_mono_48000_24.aif"), &source).expect("replace source bytes");
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.pointer_down(plot_point(plot, 0.5), MouseButton::Left, cx);
+        window.pointer_up(plot_point(plot, 0.5), MouseButton::Left, cx);
+    })
+    .expect("seek after same-path replacement");
+    cx.run_until_parked();
+    workflow.menu_key("1", cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(!view.preview_source.accepts(&old_token));
+        assert!(view.selected_tags.is_none());
+        assert!(!view.waveform.read(cx).has_tag_marks());
+        assert!(view.start_after_cues.is_none());
+        assert!(view.player.is_none());
+    });
+    workflow.dispatch(ReanalyzeSelected, cx);
+    workflow.idle(cx).await;
+    workflow.preview(&source, cx).await;
+    cx.read(|cx| assert!(!workflow.view.read(cx).waveform.read(cx).has_tag_marks()));
+}
+
 /// Keeps pending gestures display-only until one release reaches the production root subscriber.
 #[gpui_kit::test]
 async fn integration_preview_drag_commits_once_on_release_in_each_source_pane(cx: &mut TestAppContext) {

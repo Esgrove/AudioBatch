@@ -543,6 +543,27 @@ impl AppView {
         }));
     }
 
+    /// Captures the actual asynchronous adoption boundary for hardware-free stale-delivery workflows.
+    #[cfg(test)]
+    pub(super) fn delayed_tags(
+        &self,
+        tags: Arc<FileTags>,
+        cx: &Context<Self>,
+    ) -> impl FnOnce(&mut Self, &mut Context<Self>) + use<> {
+        let record = self.selected_record(cx).expect("selected record");
+        let request = EnrichmentRequest {
+            identity: EnrichmentIdentity::from_record(record),
+            source_identity: SourceIdentity::capture(&record.path).ok(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            selected: Arc::new(AtomicBool::new(true)),
+            preview: self.preview_source.token(),
+            generation: self.enrichment.generation,
+            mode: EnrichmentMode::Repair,
+            artifacts_attempted: false,
+        };
+        move |view, cx| view.adopt_enrichment(&request, EnrichmentPart::Tags(Some(tags)), cx)
+    }
+
     /// Adopts artifact fields only, leaving measurement provenance, messages, gain, transport and selection intact.
     fn adopt_enrichment(&mut self, request: &EnrichmentRequest, part: EnrichmentPart, cx: &mut Context<Self>) {
         if request.generation != self.enrichment.generation || !request.is_current() {

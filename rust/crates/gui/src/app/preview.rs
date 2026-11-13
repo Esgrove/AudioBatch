@@ -126,6 +126,21 @@ impl PreviewSource {
 }
 
 impl AppView {
+    /// Invalidates every selected-source consumer before a reload, without changing the caller's seek or zoom intent.
+    pub(super) fn prepare_preview_reload(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.enrichment.deselect();
+        self.table
+            .update(cx, |state, _| state.delegate_mut().release_waveforms_except(Some(path)));
+        self.preview_source.begin(path);
+        self.selected_tags = None;
+        self.clear_tag_marks(cx);
+        if let Some(coordinator) = &self.coordinator {
+            let generation = self.preview_source.token().map_or(0, |token| token.generation);
+            coordinator.select_preview(Some(path), generation);
+        }
+        self.request_artwork(Some(path), cx);
+    }
+
     /// Replaces stale same-path playback and its tags as one load generation before showing new analysis.
     /// An absent player still permits useful static waveform and metadata presentation.
     pub(super) fn reconcile_selected_preview(&mut self, cx: &mut Context<Self>) {
@@ -139,14 +154,11 @@ impl AppView {
         if !self.preview_source.needs_reload(&path, loaded_path) {
             return;
         }
-        self.preview_source.begin(&path);
+        self.prepare_preview_reload(&path, cx);
         self.start_after_cues = self
             .settings
             .play_from_first_cue_point
             .then(|| super::cue_start::CueStartIntent::seek(&path));
-        self.enrichment.deselect();
-        self.selected_tags = None;
-        self.clear_tag_marks(cx);
         if let Some(player) = &mut self.player {
             player.load(&path, 0.0, false);
         }

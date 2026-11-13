@@ -420,6 +420,18 @@ impl WaveformView {
         self.pending_seek.map(|pending| pending.seconds)
     }
 
+    /// Returns the retained zoom for source-lifecycle integration assertions.
+    #[cfg(test)]
+    pub const fn zoom(&self) -> f64 {
+        self.zoom
+    }
+
+    /// Exposes retained source markers to nonvisual lifecycle tests, never pixel output.
+    #[cfg(test)]
+    pub const fn has_tag_marks(&self) -> bool {
+        !self.cues.is_empty() || self.serato_overview.is_some()
+    }
+
     /// Reports retained raster availability without exposing pixels to semantic integration tests.
     #[cfg(test)]
     pub const fn has_spectrogram_raster(&self) -> bool {
