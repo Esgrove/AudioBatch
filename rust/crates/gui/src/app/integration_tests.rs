@@ -1351,6 +1351,135 @@ async fn integration_open_valid_and_broken_files_reaches_idle(cx: &mut TestAppCo
     assert!(workflow.paths.database().is_file());
 }
 
+/// Reads the installed menu's actual eligibility rather than a duplicate test presentation model.
+fn menu_disabled(cx: &App, expected: &dyn Action) -> bool {
+    fn disabled_in(items: &[OwnedMenuItem], expected: &dyn Action) -> Option<bool> {
+        items.iter().find_map(|item| match item {
+            OwnedMenuItem::Action { action, disabled, .. } if action.partial_eq(expected) => Some(*disabled),
+            OwnedMenuItem::Submenu(menu) => disabled_in(&menu.items, expected),
+            _ => None,
+        })
+    }
+    cx.get_menus()
+        .expect("installed menus")
+        .iter()
+        .find_map(|menu| disabled_in(&menu.items, expected))
+        .expect("installed command")
+}
+
+/// Modifier clicks, Select All, and a plain same-anchor click keep native menu eligibility current.
+#[gpui_kit::test]
+async fn integration_selection_menus_follow_batch_membership(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let valid = workflow.copy("sine_stereo_44100_16.wav", "valid.wav");
+    let broken = workflow.directory.path().join("broken.wav");
+    fs::write(&broken, b"broken audio").expect("broken source");
+    let broken = broken.canonicalize().expect("canonical source");
+    workflow.add(vec![valid.clone(), broken.clone()], cx);
+    workflow.idle(cx).await;
+    // A saved enabled slot is sufficient for command eligibility, no plugin or audio hardware is opened.
+    cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            let path = view.plugins.paths.chain.clone();
+            audiobatch_plugins::PluginChain {
+                slots: vec![audiobatch_plugins::ChainSlot::new(crate::test_helpers::effect(
+                    "Tests",
+                    "Eligibility",
+                ))],
+            }
+            .save_to(&path)
+            .expect("save chain");
+            view.plugins.chain = crate::plugins::live_chain::LiveChain::load(path, plugin_dispatcher(), 44_100).chain;
+            view.sync_action_menus(cx);
+        });
+    });
+    workflow.select(&broken, cx);
+    cx.read(|cx| assert!(menu_disabled(cx, &crate::menus::ProcessSelected)));
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.within(Arc::<Path>::from(valid.as_path())).click_with_modifiers(
+            ("cell", 0_usize),
+            Modifiers::secondary_key(cx),
+            cx,
+        );
+    })
+    .expect("extend failed anchor selection");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(!menu_disabled(cx, &crate::menus::ProcessSelected));
+        assert!(menu_disabled(cx, &crate::menus::NormalizeSelected));
+        assert_eq!(workflow.view.read(cx).selected_processable_records(cx).len(), 1);
+    });
+    workflow.select(&valid, cx);
+    cx.read(|cx| assert!(!menu_disabled(cx, &crate::menus::NormalizeSelected)));
+    workflow.dispatch(SelectAll, cx);
+    cx.read(|cx| assert!(menu_disabled(cx, &crate::menus::NormalizeSelected)));
+    workflow.select(&valid, cx);
+    cx.read(|cx| {
+        assert!(!menu_disabled(cx, &crate::menus::NormalizeSelected));
+        assert_eq!(workflow.view.read(cx).selected_paths(cx), std::slice::from_ref(&valid));
+    });
+    workflow.dispatch(crate::menus::NormalizeSelected, cx);
+    workflow.idle(cx).await;
+    assert!(valid.with_extension("aif").is_file());
+    assert!(broken.is_file());
+}
+
+/// Cancel and Clear retain writer exclusion until the real receiver drain observes terminal disconnect.
+#[gpui_kit::test]
+async fn integration_writer_drain_restores_menus_after_cancel_and_clear(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "source.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    for processing in [false, true] {
+        for clear in [false, true] {
+            workflow.add(vec![source.clone()], cx);
+            workflow.idle(cx).await;
+            workflow.select(&source, cx);
+            // Inject only the coordinator channel boundary, retaining production drain and action handlers.
+            let (normalize_sender, normalize_receiver) = crossbeam_channel::unbounded();
+            let (process_sender, process_receiver) = crossbeam_channel::unbounded();
+            cx.update_window(workflow.window, |_, window, cx| {
+                workflow.view.update(cx, |view, cx| {
+                    if processing {
+                        view.process_run = Some(crate::operation_run::OperationRun::new(
+                            crate::operation_run::OperationKind::Process,
+                            1,
+                            1,
+                        ));
+                        view.process_task = Some(super::process::spawn_process_drain(process_receiver, window, cx));
+                    } else {
+                        view.normalize_run = Some(crate::operation_run::OperationRun::new(
+                            crate::operation_run::OperationKind::Normalize,
+                            1,
+                            1,
+                        ));
+                        view.normalize_task =
+                            Some(super::normalize::spawn_normalize_drain(normalize_receiver, window, cx));
+                    }
+                    view.sync_action_menus(cx);
+                });
+            })
+            .expect("attach writer event drain");
+            workflow.dispatch(CancelRun, cx);
+            if clear {
+                workflow.dispatch(ClearList, cx);
+            }
+            cx.read(|cx| {
+                assert!(workflow.view.read(cx).is_winding_down());
+                assert!(menu_disabled(cx, &AddFiles));
+            });
+            drop(normalize_sender);
+            drop(process_sender);
+            workflow.idle(cx).await;
+            cx.read(|cx| {
+                assert!(!menu_disabled(cx, &AddFiles));
+                assert_eq!(menu_disabled(cx, &crate::menus::NormalizeSelected), clear);
+            });
+        }
+    }
+}
+
 /// Sorts through the table header while retaining the selected file's identity, metadata, and waveform.
 #[gpui_kit::test]
 async fn integration_selection_sort_retains_identity_metadata_and_waveform(cx: &mut TestAppContext) {

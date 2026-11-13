@@ -296,6 +296,9 @@ impl AppView {
         } = new_sliders(&settings, window, cx);
         let mut subscriptions = vec![
             cx.subscribe_in(&table, window, Self::on_table_event),
+            // Batch selection changes can notify without moving the table cursor or preview anchor.
+            // Menu synchronization compares eligibility before publishing any update.
+            cx.observe(&table, |view, _, cx| view.sync_action_menus(cx)),
             cx.subscribe_in(&waveform, window, Self::on_waveform_event),
         ];
         subscriptions.extend(slider_subscriptions);
