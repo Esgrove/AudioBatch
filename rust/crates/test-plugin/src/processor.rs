@@ -49,6 +49,8 @@ pub struct TestProcessor {
     reload_required: AtomicBool,
     /// An injected processing failure, cleared by a subsequent parameter edit.
     flush_failure: AtomicBool,
+    /// Whether the activation retry fixture has rejected its first attempt.
+    activation_rejected: AtomicBool,
     /// Arrangement of the main input bus.
     input_arrangement: AtomicU64,
     /// Arrangement of the main output bus.
@@ -77,6 +79,7 @@ impl TestProcessor {
             parameters: array::from_fn(|_| AtomicU64::new(0)),
             reload_required: AtomicBool::new(false),
             flush_failure: AtomicBool::new(false),
+            activation_rejected: AtomicBool::new(false),
             input_arrangement: AtomicU64::new(arrangement),
             output_arrangement: AtomicU64::new(arrangement),
             delay_lines: Mutex::new(Vec::new()),
@@ -107,7 +110,8 @@ impl TestProcessor {
             | Kind::Failing
             | Kind::ManyParameters
             | Kind::FlushFailing
-            | Kind::ReloadRequired => input == output && (input == SpeakerArr::kMono || input == SpeakerArr::kStereo),
+            | Kind::ReloadRequired
+            | Kind::ActivationRetry => input == output && (input == SpeakerArr::kMono || input == SpeakerArr::kStereo),
         }
     }
 
@@ -180,7 +184,8 @@ impl TestProcessor {
             | Kind::Failing
             | Kind::ManyParameters
             | Kind::FlushFailing
-            | Kind::ReloadRequired => input * gain,
+            | Kind::ReloadRequired
+            | Kind::ActivationRetry => input * gain,
             Kind::Delay => delayed(delay_lines) * gain,
             Kind::Echo => ECHO_LEVEL.mul_add(delayed(delay_lines), input) * gain,
             Kind::NotFinite => f32::NAN,
@@ -310,6 +315,9 @@ impl IComponentTrait for TestProcessor {
             "component.setActive(true)"
         });
         if state != 0 {
+            if self.kind == Kind::ActivationRetry && !self.activation_rejected.swap(true, Ordering::Relaxed) {
+                return kResultFalse;
+            }
             self.reset_delay_lines();
         }
         kResultOk

@@ -680,26 +680,26 @@ impl PluginInstance {
         if self.is_active() {
             self.flush_parameter_edits(ui)?;
         } else if !self.core.edits.is_empty() {
-            // Edits queued while inactive already updated the controller.
-            // Deliver them if set up, otherwise drain.
-            if self.setup.is_some()
-                // SAFETY: component is initialized, set up, and inactive on the UI thread.
-                && unsafe { self.core.parts.component.setActive(1) } == kResultOk
-            {
-                // SAFETY: component activation succeeded above on the UI thread.
-                unsafe { self.core.parts.processor.setProcessing(1) };
-                self.core.active.store(true, Ordering::Release);
-                let flush_result = self.flush_parameter_edits(ui);
-                // SAFETY: stop processing before deactivating the temporary activation scope.
-                unsafe {
-                    self.core.parts.processor.setProcessing(0);
-                    self.core.parts.component.setActive(0);
-                }
-                self.core.active.store(false, Ordering::Release);
-                flush_result?;
-            } else {
-                while self.core.edits.pop().is_some() {}
+            // The controller already has these edits, but capture must wait until the component receives them.
+            if self.setup.is_none() {
+                return Err(InstanceError::SetupBeforeActivation);
             }
+            // SAFETY: component is initialized, set up, and inactive on the UI thread.
+            let result = unsafe { self.core.parts.component.setActive(1) };
+            if result != kResultOk {
+                return Err(InstanceError::Activate { result });
+            }
+            // SAFETY: component activation succeeded above on the UI thread.
+            unsafe { self.core.parts.processor.setProcessing(1) };
+            self.core.active.store(true, Ordering::Release);
+            let flush_result = self.flush_parameter_edits(ui);
+            // SAFETY: stop processing before deactivating the temporary activation scope, even if delivery failed.
+            unsafe {
+                self.core.parts.processor.setProcessing(0);
+                self.core.parts.component.setActive(0);
+            }
+            self.core.active.store(false, Ordering::Release);
+            flush_result?;
         }
         Ok(self.captured_state(ui))
     }
@@ -1511,7 +1511,105 @@ mod test_parameter_snapshots {
     use audiobatch_test_plugin::{BULK_PARAMETER_COUNT, BULK_PARAMETER_START, FLUSH_FAILURE_PARAMETER, Kind};
 
     use super::*;
-    use crate::test_helpers::{active_instance, on_ui};
+    use crate::test_helpers::{MAX_BLOCK, active_instance, class_id, on_ui, test_module};
+
+    #[test]
+    fn inactive_capture_preserves_edits_until_setup_and_activation() {
+        on_ui(|ui| {
+            let module = test_module(ui);
+            let mut instance = PluginInstance::create(ui, &module, class_id(Kind::Gain), None).expect("instance");
+            assert_eq!(instance.state(ui).expect("no edits").component, 1.0_f64.to_le_bytes());
+            instance.set_parameter(ui, 0, 0.25).expect("edit before setup");
+            for _ in 0..2 {
+                assert_eq!(instance.state(ui), Err(InstanceError::SetupBeforeActivation));
+                assert_eq!(instance.core.edits.len(), 1);
+                assert!(!instance.is_active());
+            }
+            instance.configure_main_buses(ui, 2).expect("buses");
+            instance
+                .setup(ui, ProcessMode::Realtime, 48_000.0, MAX_BLOCK)
+                .expect("setup");
+            instance.activate(ui).expect("activate");
+            assert_eq!(
+                instance.state(ui).expect("delivered snapshot").component,
+                0.25_f64.to_le_bytes()
+            );
+            assert!(instance.core.edits.is_empty());
+        });
+    }
+
+    #[test]
+    fn temporary_capture_activation_leaves_the_instance_inactive() {
+        on_ui(|ui| {
+            let mut instance = active_instance(ui, Kind::Gain, 2).expect("instance");
+            instance.deactivate(ui).expect("inactive");
+            instance.set_parameter(ui, 0, 0.25).expect("inactive edit");
+            assert_eq!(
+                instance.state(ui).expect("temporary activation").component,
+                0.25_f64.to_le_bytes()
+            );
+            assert!(!instance.is_active());
+            assert!(instance.core.edits.is_empty());
+            instance
+                .setup(ui, ProcessMode::Realtime, 48_000.0, MAX_BLOCK)
+                .expect("still reconfigurable");
+        });
+    }
+
+    #[test]
+    fn rejected_temporary_activation_preserves_edits_for_retry() {
+        on_ui(|ui| {
+            let module = test_module(ui);
+            let mut instance =
+                PluginInstance::create(ui, &module, class_id(Kind::ActivationRetry), None).expect("instance");
+            instance.configure_main_buses(ui, 2).expect("buses");
+            instance
+                .setup(ui, ProcessMode::Realtime, 48_000.0, MAX_BLOCK)
+                .expect("setup");
+            instance.set_parameter(ui, 0, 0.25).expect("inactive edit");
+            assert_eq!(
+                instance.state(ui),
+                Err(InstanceError::Activate {
+                    result: vst3::Steinberg::kResultFalse
+                })
+            );
+            assert!(!instance.is_active());
+            assert_eq!(instance.core.edits.len(), 1);
+            assert_eq!(
+                instance.state(ui).expect("activation retry").component,
+                0.25_f64.to_le_bytes()
+            );
+            assert!(!instance.is_active());
+            assert!(instance.core.edits.is_empty());
+        });
+    }
+
+    #[test]
+    fn failed_temporary_flush_cleans_up_and_preserves_edits_for_recovery() {
+        on_ui(|ui| {
+            let mut instance = active_instance(ui, Kind::Gain, 2).expect("instance");
+            instance.deactivate(ui).expect("inactive");
+            instance.set_parameter(ui, 0, 0.25).expect("inactive edit");
+            instance
+                .set_parameter(ui, FLUSH_FAILURE_PARAMETER, 1.0)
+                .expect("inject failure");
+            assert!(matches!(instance.state(ui), Err(InstanceError::ParameterFlush { .. })));
+            assert!(!instance.is_active());
+            assert_eq!(instance.core.edits.len(), 2);
+            instance
+                .setup(ui, ProcessMode::Realtime, 48_000.0, MAX_BLOCK)
+                .expect("cleanup permits setup");
+            instance
+                .set_parameter(ui, FLUSH_FAILURE_PARAMETER, 0.0)
+                .expect("clear failure");
+            assert_eq!(
+                instance.state(ui).expect("recovered snapshot").component,
+                0.25_f64.to_le_bytes()
+            );
+            assert!(!instance.is_active());
+            assert!(instance.core.edits.is_empty());
+        });
+    }
 
     /// Reads the bulk parameter array from its serialized component state.
     fn values(state: &PluginState) -> Vec<f64> {
