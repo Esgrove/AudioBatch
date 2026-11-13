@@ -18,7 +18,7 @@ use colored::Colorize;
 use unicode_width::UnicodeWidthStr;
 
 use crate::args::{PluginGrouping, PluginListing};
-use crate::run::{EXIT_SUCCESS, EXIT_USAGE_ERROR};
+use crate::run::{EXIT_INTERRUPTED, EXIT_SUCCESS, EXIT_USAGE_ERROR};
 use crate::{write_bold, write_dimmed, write_error, write_warning};
 
 /// Label for a plugin without a manufacturer, and the group sorted last.
@@ -102,6 +102,21 @@ pub fn run_plugin_list(
     output: &mut dyn Write,
     log: &mut dyn Write,
 ) -> Result<u8> {
+    run_plugin_list_cancellable(listing, context, output, log, &|| false)
+}
+
+/// Prints the known plugins arranged as requested, supporting cooperative scan cancellation.
+///
+/// # Errors
+///
+/// Returns an error when the known plugins cannot be read, the scan cannot run, or the output cannot be written.
+pub fn run_plugin_list_cancellable(
+    listing: PluginListing,
+    context: &PluginListContext,
+    output: &mut dyn Write,
+    log: &mut dyn Write,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<u8> {
     let paths = &context.data_paths;
     let lock = if listing.rescan {
         let Some(lock) = ScanLock::try_acquire(&paths.scan_lock)? else {
@@ -122,8 +137,9 @@ pub fn run_plugin_list(
     }
 
     let mut exit_code = EXIT_SUCCESS;
+    let mut cancelled = false;
     if let Some(lock) = &lock {
-        rescan(lock, &mut known, context, log)?;
+        cancelled = rescan(lock, &mut known, context, log, is_cancelled)?;
         if let Err(error) = known.save_to(&paths.known_plugins) {
             let error = anyhow::Error::from(error);
             let path = paths.known_plugins.display();
@@ -132,6 +148,10 @@ pub fn run_plugin_list(
         }
     }
     drop(lock);
+    if cancelled {
+        write_warning!(log, "Interrupted. Plugin scan cancelled.")?;
+        return Ok(EXIT_INTERRUPTED);
+    }
 
     if known.plugins.is_empty() {
         write_warning!(
@@ -167,7 +187,14 @@ pub fn sort_plugins(plugins: &mut [PluginDescription]) {
 }
 
 /// Scans the plugin folders for new or changed plugins and reports the bundles that could not be scanned.
-fn rescan(lock: &ScanLock, known: &mut KnownPlugins, context: &PluginListContext, log: &mut dyn Write) -> Result<()> {
+/// Returns true when the scan was cancelled.
+fn rescan(
+    lock: &ScanLock,
+    known: &mut KnownPlugins,
+    context: &PluginListContext,
+    log: &mut dyn Write,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<bool> {
     let folders = known.search_folders();
     let folder_list = folders
         .iter()
@@ -182,7 +209,7 @@ fn rescan(lock: &ScanLock, known: &mut KnownPlugins, context: &PluginListContext
         timeout: SCAN_TIMEOUT,
     };
     let show_progress = context.show_progress;
-    let report = scan_plugins(lock, known, &options, &|| false, &mut |progress| {
+    let report = scan_plugins(lock, known, &options, is_cancelled, &mut |progress| {
         if show_progress {
             let percent = progress.fraction * 100.0;
             let _ = write!(log, "\r\x1b[K{percent:3.0}%  {}", file_name(progress.bundle));
@@ -192,7 +219,8 @@ fn rescan(lock: &ScanLock, known: &mut KnownPlugins, context: &PluginListContext
     if show_progress {
         write!(log, "\r\x1b[K")?;
     }
-    report_scan_problems(&report, log)
+    report_scan_problems(&report, log)?;
+    Ok(report.cancelled)
 }
 
 /// Prints a warning for each bundle that crashed, took too long, could not be loaded, or contained no plugins.

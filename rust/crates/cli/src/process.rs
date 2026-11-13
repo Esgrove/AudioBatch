@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use audiobatch_core::normalize::find_batch_output_conflicts;
 use audiobatch_core::operation::OperationOutcome;
 use audiobatch_core::output_file::{FileDisposer, delete_disposer};
 use audiobatch_core::{AnalysisCache, AnalysisRecord, AnalysisStatus};
@@ -17,7 +18,7 @@ use audiobatch_plugins::{
     PluginDataPaths, PresetStore, ProcessingChain, ProcessingCoordinator, ProcessingEvent, ProcessingOptions,
 };
 use crossbeam_channel::RecvTimeoutError;
-use indicatif::ProgressDrawTarget;
+use indicatif::{ProgressBar, ProgressDrawTarget};
 use vst3_host::{UiDispatcher, UiThread, pump_platform_events, ui_channel};
 
 use crate::args::ProcessArgs;
@@ -123,6 +124,7 @@ pub fn process_records(
     cache: Arc<AnalysisCache>,
     context: &ProcessContext<'_>,
     log: &mut dyn Write,
+    progress_target: ProgressDrawTarget,
     is_interrupted: &dyn Fn() -> bool,
 ) -> Result<NormalizedRecords> {
     let analyzed: Vec<_> = records.iter().filter(|record| !record.has_error()).cloned().collect();
@@ -133,6 +135,7 @@ pub fn process_records(
     if analyzed.is_empty() || is_interrupted() {
         return Ok(reported);
     }
+    let conflicts = find_batch_output_conflicts(&analyzed);
     let chain = context.chain.clone();
     let dispatcher = context.dispatcher.clone();
     let chain_count = context.workers.min(analyzed.len());
@@ -144,6 +147,7 @@ pub fn process_records(
         },
         is_interrupted,
     )??;
+    let progress = ProgressBar::with_draw_target(Some(analyzed.len() as u64), progress_target);
     let coordinator = ProcessingCoordinator::new(cache, context.workers)?;
     let receiver = coordinator.start(analyzed, context.options.clone(), chains).receiver;
     let mut results = HashMap::new();
@@ -152,19 +156,29 @@ pub fn process_records(
             coordinator.cancel();
         }
         match receiver.recv_timeout(EVENT_INTERVAL) {
+            Ok(ProcessingEvent::Started { path, .. }) => {
+                progress.set_message(
+                    path.file_name()
+                        .map_or_default(|name| name.to_string_lossy().into_owned()),
+                );
+            }
             Ok(ProcessingEvent::Finished { result, .. }) => {
+                progress.inc(1);
                 results.insert(result.source.clone(), *result);
             }
-            Err(RecvTimeoutError::Disconnected) => break,
-            Ok(
-                ProcessingEvent::Completed { .. } | ProcessingEvent::Started { .. } | ProcessingEvent::Progress { .. },
-            )
-            | Err(RecvTimeoutError::Timeout) => {}
+            Ok(ProcessingEvent::Completed { .. }) | Err(RecvTimeoutError::Disconnected) => break,
+            Ok(ProcessingEvent::Progress { .. }) | Err(RecvTimeoutError::Timeout) => {}
         }
     }
+    progress.finish_and_clear();
     for record in records.iter().filter(|record| !record.has_error()) {
         let Some(result) = results.remove(&record.path) else {
             continue;
+        };
+        let label = if conflicts.contains(&record.path) {
+            "Processing output conflict"
+        } else {
+            "Processing failed"
         };
         match result.outcome {
             OperationOutcome::Succeeded { output, notice } => {
@@ -174,7 +188,7 @@ pub fn process_records(
                 reported.records.push(output);
             }
             OperationOutcome::Failed { error } => {
-                write_failure!(log, "Processing failed: \"{}\", {error}", record.path.display())?;
+                write_failure!(log, "{label}: \"{}\", {error}", record.path.display())?;
                 let mut failed = record.clone();
                 failed.status = AnalysisStatus::Failed;
                 failed.error_message = error;
@@ -182,19 +196,13 @@ pub fn process_records(
                 reported.failure_count += 1;
             }
             OperationOutcome::CommittedButUnanalyzed { mut output, error } => {
-                write_failure!(log, "Processing failed: \"{}\", {error}", record.path.display())?;
+                write_failure!(log, "{label}: \"{}\", {error}", record.path.display())?;
                 output.status = AnalysisStatus::Failed;
                 output.error_message = error;
                 reported.records.push(output);
                 reported.failure_count += 1;
             }
         }
-    }
-    if is_interrupted() {
-        write_warning!(
-            log,
-            "Interrupted. Processing cancelled, committed outputs retained (exit {EXIT_INTERRUPTED})."
-        )?;
     }
     Ok(reported)
 }

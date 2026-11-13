@@ -189,7 +189,7 @@ pub fn format_csv(records: &[AnalysisRecord]) -> Result<String> {
             optional_number(row.crest_factor_db),
             serde_json::to_string(&row.dc_offsets)?,
             serde_json::to_string(&row.clip_counts)?,
-            row.clips_total.map(|value| value.to_string()).unwrap_or_default(),
+            row.clips_total.map_or_default(|value| value.to_string()),
             optional_number(row.stereo_correlation),
             row.status,
             row.error,
@@ -227,7 +227,7 @@ fn round_to(value: f64, scale: f64) -> f64 {
 
 /// Formats an optional number for CSV, with an empty field for `None`.
 fn optional_number(value: Option<f64>) -> String {
-    value.map(csv_number).unwrap_or_default()
+    value.map_or_default(csv_number)
 }
 
 /// Formats a number for CSV the way the JSON output writes it,

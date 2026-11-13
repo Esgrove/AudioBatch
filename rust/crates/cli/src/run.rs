@@ -111,16 +111,7 @@ pub fn run_workflow(
         }
     };
 
-    let mut input_paths = args.paths.clone();
-    if input_paths.is_empty() {
-        let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        write_info!(
-            log,
-            "No input paths provided, using current directory: \"{}\"",
-            current.display()
-        )?;
-        input_paths.push(current);
-    }
+    let input_paths = resolve_input_paths(&args.paths, log)?;
 
     let normalization_cache = Arc::clone(&cache);
     let coordinator = AnalysisCoordinator::new(cache, args.worker_count())?;
@@ -133,6 +124,7 @@ pub fn run_workflow(
     let started = Instant::now();
     let mut records = analyze_with_progress(&coordinator, options, progress_target(), is_interrupted);
     if is_interrupted() {
+        write_warning!(log, "Interrupted. Analysis cancelled.")?;
         return Ok(EXIT_INTERRUPTED);
     }
     let failures: Vec<&AnalysisRecord> = records.iter().filter(|record| record.has_error()).collect();
@@ -160,7 +152,14 @@ pub fn run_workflow(
     }
     failure_count += skipped_inputs.len();
     let (mut reported, show_full_paths) = if let Some(processing) = processing {
-        let processed = process_records(&records, normalization_cache, processing, log, is_interrupted)?;
+        let processed = process_records(
+            &records,
+            normalization_cache,
+            processing,
+            log,
+            progress_target(),
+            is_interrupted,
+        )?;
         failure_count += processed.failure_count;
         (processed.records, true)
     } else if let Some(options) = &normalization {
@@ -180,21 +179,52 @@ pub fn run_workflow(
     };
     let interrupted = is_interrupted();
     sort_records(&mut reported, args.sort, !args.reverse);
-
-    let text = match args.output {
-        OutputFormat::Table => format_table(&reported, show_full_paths),
-        OutputFormat::Csv => format_csv(&reported)?,
-        OutputFormat::Json => format_json(&reported)?,
-    };
-    output.write_all(text.as_bytes())?;
-    output.flush()?;
-    Ok(if interrupted {
-        EXIT_INTERRUPTED
-    } else if failure_count == 0 {
+    write_records(output, args.output, &reported, show_full_paths)?;
+    if interrupted {
+        let message = if processing.is_some() {
+            "Interrupted. Processing cancelled, committed outputs retained."
+        } else {
+            "Interrupted. Normalization cancelled, committed outputs retained."
+        };
+        write_warning!(log, "{message}")?;
+        return Ok(EXIT_INTERRUPTED);
+    }
+    Ok(if failure_count == 0 {
         EXIT_SUCCESS
     } else {
         EXIT_FAILURES
     })
+}
+
+/// Formats and flushes the final record list in the selected output format.
+fn write_records(
+    output: &mut dyn Write,
+    format: OutputFormat,
+    reported: &[AnalysisRecord],
+    show_full_paths: bool,
+) -> Result<()> {
+    let text = match format {
+        OutputFormat::Table => format_table(reported, show_full_paths),
+        OutputFormat::Csv => format_csv(reported)?,
+        OutputFormat::Json => format_json(reported)?,
+    };
+    output.write_all(text.as_bytes())?;
+    output.flush()?;
+    Ok(())
+}
+
+/// Returns the caller's input paths, defaulting to the current working directory when none were given.
+fn resolve_input_paths(paths: &[PathBuf], log: &mut dyn Write) -> Result<Vec<PathBuf>> {
+    if !paths.is_empty() {
+        return Ok(paths.to_vec());
+    }
+    let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    write_info!(
+        log,
+        "No input paths provided, using current directory: \"{}\"",
+        current.display()
+    )?;
+    Ok(vec![current])
 }
 
 /// Normalizes the analyzed records on `worker_count` workers and returns the records to report, in input order.
@@ -280,8 +310,7 @@ fn normalize_records(
 /// Returns the file name of a path for the progress message.
 fn file_name_of(path: &Path) -> String {
     path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default()
+        .map_or_default(|name| name.to_string_lossy().into_owned())
 }
 
 /// Returns an error for every path named on the command line that produced no result:
@@ -301,9 +330,7 @@ fn find_skipped_inputs(input_paths: &[PathBuf], records: &[AnalysisRecord]) -> V
         if input.is_dir() || analyzed.contains(full_path.as_path()) {
             continue;
         }
-        let hidden = input
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with('.'));
+        let hidden = audiobatch_core::discovery::is_hidden_path(input);
         let reason = if hidden {
             "Hidden files are not analyzed"
         } else {
@@ -361,11 +388,7 @@ fn analyze_with_progress(
         match event {
             AnalysisEvent::Planned { stale_count, .. } => progress.set_length(stale_count as u64),
             AnalysisEvent::Started { path, .. } => {
-                progress.set_message(
-                    path.file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                );
+                progress.set_message(file_name_of(&path));
             }
             AnalysisEvent::Finished { record, .. } => {
                 if !record.from_cache {
