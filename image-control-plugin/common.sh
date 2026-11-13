@@ -6,7 +6,7 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export REPO
 
 # The root helpers define and export REPO_ROOT for all repository-level paths below.
-# shellcheck source=../common.sh
+# shellcheck source=common.sh
 source "$(dirname "$REPO")/common.sh"
 
 # Prints the CMake build directory for a build type.

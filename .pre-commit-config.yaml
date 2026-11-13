@@ -70,3 +70,20 @@ repos:
         types: [python]
         language: system
         priority: 2
+
+      - id: shfmt
+        name: Shell Format
+        description: Run shfmt on shell scripts included in the commit, with the .editorconfig settings.
+        entry: shfmt --write
+        types: [shell]
+        language: system
+        priority: 1
+
+      # After shfmt, so shellcheck inspects the formatted files.
+      - id: shellcheck
+        name: Shell Lint
+        description: Run shellcheck on shell scripts included in the commit.
+        entry: shellcheck --external-sources
+        types: [shell]
+        language: system
+        priority: 2

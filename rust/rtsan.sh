@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
+# shellcheck source=rust/common.sh
 source "$DIR/common.sh"
 
 USAGE="Usage: $0 [OPTIONS]

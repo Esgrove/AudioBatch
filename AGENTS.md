@@ -163,7 +163,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and runs in its own environment with `uv run --script`, so add a script's packages there, not to `pyproject.toml`.
   Check the scripts with `uv run ruff format` and `uv run ruff check --fix` from the repository root.
 - `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/`, `test-plugin/`, and `image-control-plugin/`,
-  cargo fmt on `rust/`, ruff on the Python scripts, and basic file checks through [prek](https://prek.j178.dev).
+  cargo fmt on `rust/`, ruff on the Python scripts, shfmt and shellcheck on the shell scripts,
+  and basic file checks through [prek](https://prek.j178.dev).
 - CI builds, tests, lints, format-checks, sanitizes, fuzzes, and measures coverage of the applications and plugins.
   It runs no benchmarks and no tests of the scripts themselves.
   `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.

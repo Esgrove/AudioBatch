@@ -3,7 +3,7 @@
 set -eo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
+# shellcheck source=image-control-plugin/rust/common.sh
 source "$SCRIPT_DIR/common.sh"
 
 USAGE="Usage: $0 [OPTIONS]

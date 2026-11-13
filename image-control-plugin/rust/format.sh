@@ -4,7 +4,7 @@ set -eo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PLUGIN_DIR=$(dirname "$SCRIPT_DIR")
-# shellcheck source=../common.sh
+# shellcheck source=image-control-plugin/common.sh
 source "$PLUGIN_DIR/common.sh"
 
 USAGE="Usage: $0 [OPTIONS]

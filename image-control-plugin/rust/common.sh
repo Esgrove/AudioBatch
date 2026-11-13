@@ -1,7 +1,7 @@
 #!/bin/bash
 # Shares Cargo artifact selection and direct packaged-format checks across Rust ImageControl entry points.
 
-# shellcheck source=../common.sh
+# shellcheck source=image-control-plugin/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/common.sh"
 
 # Resolves Cargo's target directory before changing the caller's working directory.

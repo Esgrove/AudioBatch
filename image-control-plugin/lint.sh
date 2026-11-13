@@ -2,7 +2,7 @@
 set -eo pipefail
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
+# shellcheck source=image-control-plugin/common.sh
 source "$DIR/common.sh"
 ROOT="$REPO_ROOT"
 
