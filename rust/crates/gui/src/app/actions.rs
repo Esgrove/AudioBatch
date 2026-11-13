@@ -565,18 +565,19 @@ impl AppView {
         let Some(selected) = self.selected.clone() else {
             return;
         };
-        let needs_load = self.player.as_ref().is_some_and(|player| {
-            player.loaded_path() != Some(selected.as_path())
-                || self.preview_source.needs_reload(&selected, player.loaded_path())
-        });
+        let needs_load = self
+            .preview_source
+            .needs_reload(&selected, self.player.as_ref().and_then(Player::loaded_path));
         if needs_load {
-            self.preview_source.begin(&selected);
+            self.prepare_preview_reload(&selected, cx);
             if let Some(player) = &mut self.player {
                 player.set_insert_gain(1.0);
                 player.load(&selected, seconds, true);
             }
             self.refresh_selected_waveform(cx);
             self.apply_preview_gain(cx);
+            self.request_selected_enrichment(cx);
+            self.update_gain_prediction(cx);
         } else if let Some(player) = &mut self.player {
             let playing = player.is_playing();
             player.seek(seconds);

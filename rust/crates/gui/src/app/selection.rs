@@ -252,10 +252,7 @@ impl AppView {
                 .preview_source
                 .needs_reload(path, self.player.as_ref().and_then(Player::loaded_path));
         if changed {
-            self.enrichment.deselect();
-            self.table
-                .update(cx, |state, _| state.delegate_mut().release_waveforms_except(Some(path)));
-            self.preview_source.begin(path);
+            self.prepare_preview_reload(path, cx);
         }
         self.selected = Some(path.to_path_buf());
         if let Some(coordinator) = &self.coordinator {
@@ -271,8 +268,6 @@ impl AppView {
         }
         self.request_artwork(Some(path), cx);
         if changed {
-            self.selected_tags = None;
-            self.clear_tag_marks(cx);
             // Each file starts at the whole-file zoom.
             self.waveform.update(cx, |waveform, cx| {
                 waveform.show_placeholder("Loading preview", cx);
