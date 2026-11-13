@@ -459,7 +459,7 @@ pub fn scan_plugins(
             }
             WorkerOutcome::Crashed => {
                 worker = None;
-                known.plugins.retain(|plugin| plugin.bundle != *bundle);
+                apply_results(known, &mut report, bundle, Vec::new());
                 known.blacklist.push(bundle.clone());
                 report.crashed.push(bundle.clone());
             }
@@ -715,10 +715,10 @@ mod test_scanner {
 
     /// Returns the path of the scan worker example, which Cargo builds with the tests of this crate.
     fn worker_path() -> PathBuf {
-        let executable = std::env::current_exe().expect("test executable");
-        let profile_folder = executable.parent().and_then(Path::parent).expect("Cargo target folder");
-        profile_folder
-            .join("examples")
+        audiobatch_test_plugin::module_library_path()
+            .expect("Cargo target examples path")
+            .parent()
+            .expect("examples folder")
             .join(format!("scan_worker{}", std::env::consts::EXE_SUFFIX))
     }
 

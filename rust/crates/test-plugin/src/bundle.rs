@@ -16,9 +16,7 @@ const EXAMPLE_NAME: &str = "module";
 /// Returns an error when the path of the running executable is unknown.
 pub fn module_library_path() -> io::Result<PathBuf> {
     let executable = std::env::current_exe()?;
-    let profile_folder = executable
-        .parent()
-        .and_then(Path::parent)
+    let profile_folder = profile_folder(&executable)
         .ok_or_else(|| io::Error::other("the test executable is not inside a Cargo target folder"))?;
     let file_name = format!(
         "{}{EXAMPLE_NAME}{}",
@@ -26,6 +24,21 @@ pub fn module_library_path() -> io::Result<PathBuf> {
         std::env::consts::DLL_SUFFIX
     );
     Ok(profile_folder.join("examples").join(file_name))
+}
+
+/// Resolves the Cargo profile folder (`<target>/<profile>`) across both `<profile>/deps/<exe>`
+/// and Cargo 1.100's `<profile>/build/<pkg>/<hash>/out/<exe>` build-dir layouts.
+fn profile_folder(executable: &Path) -> Option<&Path> {
+    let direct = executable.parent()?.parent()?;
+    if direct
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "build")
+    {
+        return direct.parent()?.parent()?.parent();
+    }
+    Some(direct)
 }
 
 /// Creates the bundle `<folder>/<name>.vst3` around a copy of the `module` example library and returns its path.

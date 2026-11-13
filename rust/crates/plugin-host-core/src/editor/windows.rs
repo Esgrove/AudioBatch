@@ -106,11 +106,11 @@ impl NativeWindow {
                 source: std::io::Error::last_os_error(),
             });
         };
+        let window = Self { hwnd, handle };
+        window.set_content_size(size);
         let state = Box::into_raw(Box::new(Rc::downgrade(callbacks)));
         // SAFETY: the window procedure frees this state when the valid window is destroyed.
         unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, state.expose_provenance().cast_signed()) };
-        let window = Self { hwnd, handle };
-        window.set_content_size(size);
         Ok(window)
     }
 
@@ -166,8 +166,8 @@ impl NativeWindow {
         let placed = RECT {
             left: position.x,
             top: position.y,
-            right: position.x + (rect.right - rect.left),
-            bottom: position.y + (rect.bottom - rect.top),
+            right: position.x.saturating_add(rect.right.saturating_sub(rect.left)),
+            bottom: position.y.saturating_add(rect.bottom.saturating_sub(rect.top)),
         };
         let corner = POINT {
             x: position.x,
@@ -248,6 +248,7 @@ impl NativeWindow {
             SetForegroundWindow(self.hwnd);
         }
     }
+
     /// Hides the native parent while retaining the embedded plugin window.
     pub fn hide(&self) {
         // SAFETY: The window remains owned by this UI-thread-only value.
@@ -384,21 +385,21 @@ unsafe fn handle_message(
 fn constrain_drag(hwnd: HWND, callbacks: &dyn EditorCallbacks, edge: u32, rect: &mut RECT) {
     let (extra_width, extra_height) = frame_extent(hwnd);
     let proposed = WindowSize {
-        width: (rect.right - rect.left - extra_width).max(1),
-        height: (rect.bottom - rect.top - extra_height).max(1),
+        width: rect.right.saturating_sub(rect.left).saturating_sub(extra_width).max(1),
+        height: rect.bottom.saturating_sub(rect.top).saturating_sub(extra_height).max(1),
     };
     let accepted = callbacks.constrain(proposed);
-    let width = accepted.width + extra_width;
-    let height = accepted.height + extra_height;
+    let width = accepted.width.saturating_add(extra_width);
+    let height = accepted.height.saturating_add(extra_height);
     if matches!(edge, WMSZ_LEFT | WMSZ_TOPLEFT | WMSZ_BOTTOMLEFT) {
-        rect.left = rect.right - width;
+        rect.left = rect.right.saturating_sub(width);
     } else {
-        rect.right = rect.left + width;
+        rect.right = rect.left.saturating_add(width);
     }
     if matches!(edge, WMSZ_TOP | WMSZ_TOPLEFT | WMSZ_TOPRIGHT) {
-        rect.top = rect.bottom - height;
+        rect.top = rect.bottom.saturating_sub(height);
     } else {
-        rect.bottom = rect.top + height;
+        rect.bottom = rect.top.saturating_add(height);
     }
 }
 
@@ -417,14 +418,24 @@ fn window_rect(hwnd: HWND) -> Option<RECT> {
 /// Moves a window rectangle minimally into a work area, keeping oversized windows' title bars reachable.
 const fn keep_inside(window: &RECT, area: &RECT) -> WindowPosition {
     WindowPosition {
-        x: keep_span_inside(window.left, window.right - window.left, area.left, area.right),
-        y: keep_span_inside(window.top, window.bottom - window.top, area.top, area.bottom),
+        x: keep_span_inside(
+            window.left,
+            window.right.saturating_sub(window.left),
+            area.left,
+            area.right,
+        ),
+        y: keep_span_inside(
+            window.top,
+            window.bottom.saturating_sub(window.top),
+            area.top,
+            area.bottom,
+        ),
     }
 }
 
 /// Fits a span between two edges, returning the lower edge if the span is longer than the area.
 const fn keep_span_inside(start: i32, length: i32, lower: i32, upper: i32) -> i32 {
-    let highest = upper - length;
+    let highest = upper.saturating_sub(length);
     if start > highest {
         if highest > lower { highest } else { lower }
     } else if start < lower {

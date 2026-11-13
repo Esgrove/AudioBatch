@@ -203,10 +203,10 @@ impl FramePipeline {
         let skip = usize::try_from(self.skip_until.saturating_sub(self.position))
             .unwrap_or(usize::MAX)
             .min(frame_count);
-        let start_position = self.position + skip as u64;
+        let start_position = self.position.saturating_add(skip as u64);
         let left = left.get(skip..).unwrap_or_default();
         let right = right.get(skip..).unwrap_or_default();
-        self.position += frame_count as u64;
+        self.position = self.position.saturating_add(frame_count as u64);
 
         match &mut self.resampler {
             Some(stage) => stage.push(left, right, self.generation, output)?,
@@ -299,12 +299,15 @@ impl ResamplerStage {
     /// Converting those blocks to input frames gives a finite budget even when one FFT block spans many input chunks.
     fn flush(&mut self, generation: u32, output: &mut Vec<Frame>) -> Result<(), PipelineError> {
         let expected = self.output_length();
-        let raw_output = expected + self.resampler.output_delay() as u64;
-        let fft_blocks = raw_output.div_ceil(self.resampler.fft_size_out() as u64);
-        let required_input = fft_blocks * self.resampler.fft_size_in() as u64;
-        let remaining_chunks = required_input
-            .saturating_sub(self.processed_input)
-            .div_ceil(RESAMPLER_CHUNK_FRAMES as u64);
+        let raw_output = u128::from(expected) + u128::from(self.resampler.output_delay() as u64);
+        let fft_blocks = raw_output.div_ceil(u128::from(self.resampler.fft_size_out() as u64));
+        let required_input = fft_blocks * u128::from(self.resampler.fft_size_in() as u64);
+        let remaining_chunks = u64::try_from(
+            required_input
+                .saturating_sub(u128::from(self.processed_input))
+                .div_ceil(RESAMPLER_CHUNK_FRAMES as u128),
+        )
+        .unwrap_or(u64::MAX);
         for _ in 0..remaining_chunks {
             if self.emitted == expected {
                 break;
@@ -327,7 +330,10 @@ impl ResamplerStage {
 
     /// Returns the exact number of output timestamps strictly before the end of the accepted input.
     fn output_length(&self) -> u64 {
-        (self.received_input * u64::from(self.output_rate)).div_ceil(u64::from(self.source_rate))
+        u64::try_from(
+            (u128::from(self.received_input) * u128::from(self.output_rate)).div_ceil(u128::from(self.source_rate)),
+        )
+        .unwrap_or(u64::MAX)
     }
 
     /// Resamples one full input chunk and appends the output frames.
@@ -358,8 +364,10 @@ impl ResamplerStage {
             if self.emitted >= output_limit.unwrap_or_else(|| self.output_length()) {
                 break;
             }
-            let position =
-                self.start_position + self.emitted * u64::from(self.source_rate) / u64::from(self.output_rate);
+            let advanced =
+                u64::try_from(u128::from(self.emitted) * u128::from(self.source_rate) / u128::from(self.output_rate))
+                    .unwrap_or(u64::MAX);
+            let position = self.start_position.saturating_add(advanced);
             output.push(Frame {
                 generation,
                 position,

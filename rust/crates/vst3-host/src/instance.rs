@@ -264,6 +264,15 @@ impl InstanceCore {
         self.parts.controller.as_ref()
     }
 
+    /// Returns the UI-thread dispatcher used for off-thread teardown, when configured.
+    #[cfg_attr(
+        not(any(feature = "editor", test)),
+        expect(dead_code, reason = "only editor plug frames clone the UI dispatcher")
+    )]
+    pub(crate) fn dispatcher(&self) -> Option<UiDispatcher> {
+        self.dispatcher.clone()
+    }
+
     /// Records that a processor handle was created.
     pub(crate) fn processor_created(&self) {
         self.live_processors.fetch_add(1, Ordering::AcqRel);
@@ -626,11 +635,12 @@ impl PluginInstance {
     /// # Errors
     ///
     /// Returns an error while processor handles exist.
-    pub fn deactivate(&mut self, _ui: &UiThread) -> Result<(), InstanceError> {
+    pub fn deactivate(&mut self, ui: &UiThread) -> Result<(), InstanceError> {
         if !self.is_active() {
             return Ok(());
         }
         self.ensure_no_processors()?;
+        let _ = self.flush_parameter_edits(ui);
         let parts = &self.core.parts;
         // SAFETY: both objects are valid, and processing stops before the component is deactivated.
         unsafe {
@@ -667,7 +677,30 @@ impl PluginInstance {
     /// Processor handles must be retired first, so state capture cannot overlap audio processing.
     pub fn state(&self, ui: &UiThread) -> Result<PluginState, InstanceError> {
         self.ensure_no_processors()?;
-        self.flush_parameter_edits(ui)?;
+        if self.is_active() {
+            self.flush_parameter_edits(ui)?;
+        } else if !self.core.edits.is_empty() {
+            // Edits queued while inactive already updated the controller.
+            // Deliver them if set up, otherwise drain.
+            if self.setup.is_some()
+                // SAFETY: component is initialized, set up, and inactive on the UI thread.
+                && unsafe { self.core.parts.component.setActive(1) } == kResultOk
+            {
+                // SAFETY: component activation succeeded above on the UI thread.
+                unsafe { self.core.parts.processor.setProcessing(1) };
+                self.core.active.store(true, Ordering::Release);
+                let flush_result = self.flush_parameter_edits(ui);
+                // SAFETY: stop processing before deactivating the temporary activation scope.
+                unsafe {
+                    self.core.parts.processor.setProcessing(0);
+                    self.core.parts.component.setActive(0);
+                }
+                self.core.active.store(false, Ordering::Release);
+                flush_result?;
+            } else {
+                while self.core.edits.pop().is_some() {}
+            }
+        }
         Ok(self.captured_state(ui))
     }
 
@@ -705,6 +738,7 @@ impl PluginInstance {
     /// Returns an error when the plugin is active.
     pub fn set_state(&mut self, ui: &UiThread, state: &PluginState) -> Result<bool, InstanceError> {
         self.ensure_reconfigurable()?;
+        self.layout = None;
         let mut accepted = true;
         if !state.component.is_empty() {
             let stream = MemoryStream::with_data(state.component.clone());
@@ -713,11 +747,11 @@ impl PluginInstance {
                 .map_or(std::ptr::null_mut(), |stream| stream.as_ptr());
             // SAFETY: the component and the stream are valid for the call.
             accepted = unsafe { self.core.parts.component.setState(pointer) } == kResultOk;
-            if self.core.parts.separate_controller {
+            if accepted && self.core.parts.separate_controller {
                 self.load_controller_component_state(ui, &state.component);
             }
         }
-        if let (Some(controller), false) = (&self.core.parts.controller, state.controller.is_empty()) {
+        if accepted && let (Some(controller), false) = (&self.core.parts.controller, state.controller.is_empty()) {
             let stream = MemoryStream::with_data(state.controller.clone());
             let pointer = stream
                 .to_com_ptr::<IBStream>()

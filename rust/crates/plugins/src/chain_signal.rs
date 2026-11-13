@@ -73,14 +73,16 @@ impl ChainSignal {
         let frames = frames.min(self.channels[0].len());
         for (index, processor) in processors.iter_mut().enumerate() {
             let main_inputs = processor.input_channels();
-            self.fit_to(main_inputs.clamp(1, MAXIMUM_SIGNAL_CHANNELS));
+            self.fit_to_frames(main_inputs.clamp(1, MAXIMUM_SIGNAL_CHANNELS), frames);
             let main_outputs = processor.output_channels();
             if main_inputs.max(main_outputs) <= MAXIMUM_SIGNAL_CHANNELS && frames <= processor.max_block_frames() {
                 processor
                     .process_in_place(&mut self.channels_mut(), frames)
                     .map_err(|error| StageFailure { index, error })?;
                 for signal in self.channels.iter_mut().skip(main_outputs) {
-                    signal.fill(0.0);
+                    if let Some(samples) = signal.get_mut(..frames) {
+                        samples.fill(0.0);
+                    }
                 }
                 self.width = main_outputs.clamp(1, MAXIMUM_SIGNAL_CHANNELS);
                 continue;
@@ -91,7 +93,11 @@ impl ChainSignal {
                 };
                 match self.channels.get(channel).filter(|_| channel < self.width) {
                     Some(signal) => copy_samples(signal, input, frames),
-                    None => input.fill(0.0),
+                    None => {
+                        if let Some(samples) = input.get_mut(..frames) {
+                            samples.fill(0.0);
+                        }
+                    }
                 }
             }
             processor
@@ -100,7 +106,11 @@ impl ChainSignal {
             for (channel, signal) in self.channels.iter_mut().enumerate() {
                 match processor.output_channel(channel) {
                     Some(output) => copy_samples(output, signal, frames),
-                    None => signal.fill(0.0),
+                    None => {
+                        if let Some(samples) = signal.get_mut(..frames) {
+                            samples.fill(0.0);
+                        }
+                    }
                 }
             }
             self.width = main_outputs.clamp(1, MAXIMUM_SIGNAL_CHANNELS);
@@ -108,15 +118,25 @@ impl ChainSignal {
         Ok(())
     }
 
-    /// Changes the number of channels carrying signal,
-    /// copying mono to both channels or folding stereo to the average of both.
+    /// Changes the number of channels carrying signal across the entire block.
     pub fn fit_to(&mut self, width: usize) {
+        let frames = self.channels[0].len();
+        self.fit_to_frames(width, frames);
+    }
+
+    /// Changes the number of channels carrying signal over the active `frames` prefix.
+    fn fit_to_frames(&mut self, width: usize, frames: usize) {
         let width = width.clamp(1, MAXIMUM_SIGNAL_CHANNELS);
         let [left, right] = &mut self.channels;
         if self.width == 1 && width == 2 {
-            right.copy_from_slice(left);
-        } else if self.width == 2 && width == 1 {
-            for (left, right) in left.iter_mut().zip(right.iter()) {
+            if let (Some(source), Some(target)) = (left.get(..frames), right.get_mut(..frames)) {
+                target.copy_from_slice(source);
+            }
+        } else if self.width == 2
+            && width == 1
+            && let (Some(left_slice), Some(right_slice)) = (left.get_mut(..frames), right.get(..frames))
+        {
+            for (left, right) in left_slice.iter_mut().zip(right_slice.iter()) {
                 *left = f32::midpoint(*left, *right);
             }
         }

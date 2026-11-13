@@ -586,6 +586,7 @@ impl PluginInstance {
             return Ok(true);
         }
         let mut parts = self.core.parts.borrow_mut();
+        parts.layout = None;
         // Pending host edits precede the restored snapshot, so they must not overwrite it at the next block.
         self.core.flush(&mut parts);
         let handle = parts.plugin.plugin_handle();

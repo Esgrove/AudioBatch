@@ -35,8 +35,8 @@ const LATENCY_PARAMETER: u32 = 2;
 /// Largest latency of the test plugin in samples, which maps linearly from zero.
 const LATENCY_MAXIMUM: u32 = 1024;
 
-/// Largest plain value of both parameters, which map linearly from zero.
-const PARAMETER_MAXIMUM: f32 = 2.0;
+/// Scale factor from the test plugin's `[0.0, 2.0]` plain range into normalized `[0.0, 1.0]`.
+const PARAMETER_NORMALIZATION_SCALE: f32 = 0.5;
 
 /// Sample rate the plugin is set up at while its parameters are set.
 const SETUP_SAMPLE_RATE: f64 = 44_100.0;
@@ -134,8 +134,16 @@ fn configured_state(
     instance.configure_main_buses(ui, 2)?;
     instance.setup(ui, ProcessMode::Offline, SETUP_SAMPLE_RATE, SETUP_BLOCK_FRAMES)?;
     instance.activate(ui)?;
-    instance.set_parameter(ui, GAIN_PARAMETER, f64::from(parameters.gain / PARAMETER_MAXIMUM))?;
-    instance.set_parameter(ui, WIDTH_PARAMETER, f64::from(parameters.width / PARAMETER_MAXIMUM))?;
+    instance.set_parameter(
+        ui,
+        GAIN_PARAMETER,
+        f64::from(parameters.gain * PARAMETER_NORMALIZATION_SCALE),
+    )?;
+    instance.set_parameter(
+        ui,
+        WIDTH_PARAMETER,
+        f64::from(parameters.width * PARAMETER_NORMALIZATION_SCALE),
+    )?;
     instance.set_parameter(
         ui,
         LATENCY_PARAMETER,
