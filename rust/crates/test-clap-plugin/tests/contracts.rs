@@ -79,10 +79,11 @@ fn set(plugin: &mut PluginInstance<Host>, values: &[(ClapId, f64)]) {
         .iter()
         .map(|&(id, value)| ParamValueEvent::new(0, id, Pckn::match_all(), value))
         .collect();
+    let mut ignored = EventBuffer::new();
     params.flush(
         &mut plugin.inactive_plugin_handle().expect("inactive"),
         &InputEvents::from_buffer(&events),
-        &mut OutputEvents::void(),
+        &mut OutputEvents::from_buffer(&mut ignored),
     );
 }
 
@@ -113,11 +114,12 @@ fn process(
         latency: 0,
         channels: AudioPortBufferType::f32_output_only(output.iter_mut().map(Vec::as_mut_slice)),
     }]);
+    let mut ignored = EventBuffer::new();
     processor.process(
         &input,
         &mut output,
         &InputEvents::from_buffer(&events),
-        &mut OutputEvents::void(),
+        &mut OutputEvents::from_buffer(&mut ignored),
         None,
         None,
     )
@@ -422,10 +424,11 @@ fn active_latency_change_requests_restart_and_latches_only_at_activation() {
         .get_extension::<PluginParams>()
         .expect("params");
     let events = [ParamValueEvent::new(0, LATENCY_PARAMETER, Pckn::match_all(), 3.0)];
+    let mut ignored = EventBuffer::new();
     params.flush_active(
         &mut processor.plugin_handle(),
         &InputEvents::from_buffer(&events),
-        &mut OutputEvents::void(),
+        &mut OutputEvents::from_buffer(&mut ignored),
     );
     assert_eq!(requests.restart.load(Ordering::Relaxed), 1);
     let latency = plugin

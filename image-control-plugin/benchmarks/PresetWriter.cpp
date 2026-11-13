@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <memory>
 #include <span>
 #include <stdexcept>
