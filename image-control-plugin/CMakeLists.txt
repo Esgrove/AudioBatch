@@ -40,10 +40,11 @@ add_compile_definitions(
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/JUCE" JUCE)
 
 # VST3 everywhere, and an Audio Unit on macOS from the same code.
-set(IMAGE_CONTROL_FORMATS VST3)
+set(IMAGE_CONTROL_DEFAULT_FORMATS VST3)
 if(APPLE)
-    list(APPEND IMAGE_CONTROL_FORMATS AU)
+    list(APPEND IMAGE_CONTROL_DEFAULT_FORMATS AU)
 endif()
+set(IMAGE_CONTROL_FORMATS "${IMAGE_CONTROL_DEFAULT_FORMATS}" CACHE STRING "Plugin formats to build (VST3;AU)")
 
 # install.sh copies the bundles to the user's plugin folders, so the build itself never does.
 juce_add_plugin(
@@ -85,19 +86,34 @@ juce_add_plugin(
     FALSE
 )
 
-# Ninja's linker signature seals only the Audio Unit executable, not its completed bundle.
-# Sign after resource generation, also when an incremental build changes only the bundle resources.
+# Ninja's linker signature seals only the plugin executable, not its completed bundle or generated moduleinfo.json.
+# Sign both bundles with Hardened Runtime after resource and moduleinfo generation.
 if(APPLE)
-    set_target_properties(
-        ImageControl_AU PROPERTIES XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO
-    )
-    add_custom_target(
-        ImageControl_AUSign ALL
-        COMMAND /usr/bin/codesign --force --sign - --timestamp=none "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
-        COMMAND /usr/bin/codesign --verify --deep --strict "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
-        DEPENDS ImageControl_AU
-        VERBATIM
-    )
+    if(TARGET ImageControl_VST3)
+        set_target_properties(
+            ImageControl_VST3 PROPERTIES XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED
+                                                                                 NO
+        )
+        add_custom_target(
+            ImageControl_VST3Sign ALL
+            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle
+                    "$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
+            DEPENDS ImageControl_VST3
+            VERBATIM
+        )
+    endif()
+    if(TARGET ImageControl_AU)
+        set_target_properties(
+            ImageControl_AU PROPERTIES XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO
+        )
+        add_custom_target(
+            ImageControl_AUSign ALL
+            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle
+                    "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
+            DEPENDS ImageControl_AU
+            VERBATIM
+        )
+    endif()
 endif()
 
 set(IMAGE_CONTROL_SOURCES
@@ -358,7 +374,11 @@ if(IMAGE_CONTROL_BUILD_TESTS)
                                               IMAGE_CONTROL_REALTIME_VST3_PATH="$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
         )
         target_link_options(ImageControlRealtimeTests PRIVATE -fsanitize=realtime)
-        add_dependencies(ImageControlRealtimeTests ImageControl_VST3)
+        if(APPLE AND TARGET ImageControl_VST3Sign)
+            add_dependencies(ImageControlRealtimeTests ImageControl_VST3Sign)
+        else()
+            add_dependencies(ImageControlRealtimeTests ImageControl_VST3)
+        endif()
         set_source_files_properties(
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/RealtimeTests.cpp" TARGET_DIRECTORY ImageControlRealtimeTests
             PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"

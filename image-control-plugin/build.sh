@@ -143,7 +143,7 @@ prepare_plugin_build() {
 
     TARGETS=(--target ImageControl_VST3)
     if [ "$BASH_PLATFORM" = "mac" ]; then
-        TARGETS+=(ImageControl_AUSign)
+        TARGETS=(--target ImageControl_VST3Sign ImageControl_AUSign)
     fi
     if [ "$RUN_TESTS" = true ]; then
         TARGETS+=(ImageControlTests ImageControlParity)

@@ -3,6 +3,7 @@
 # Windows always requires AVX2. CI never adds host-specific CPU flags.
 
 include(CheckCompilerFlag)
+include(CheckCXXSourceCompiles)
 include(CheckIPOSupported)
 
 # Checks both languages because the audio meter and the SQLite fallback are compiled as C.
@@ -22,6 +23,9 @@ if(DEFINED ENV{CI} OR CMAKE_CROSSCOMPILING)
     set(native_default OFF)
 endif()
 option(AUDIOBATCH_NATIVE_CPU "Target the local CPU in Release builds, never in CI" ${native_default})
+set(AUDIOBATCH_TARGET_CPU "" CACHE STRING
+                                   "Explicit Release target CPU when AUDIOBATCH_NATIVE_CPU is OFF, such as apple-m1"
+)
 option(AUDIOBATCH_LTO "Enable Release link-time optimization when supported" ON)
 
 set(has_release FALSE)
@@ -74,6 +78,31 @@ elseif(APPLE AND CMAKE_OSX_ARCHITECTURES)
 endif()
 
 set(cpu_languages "$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>")
+set(is_apple_arm64 FALSE)
+if(APPLE)
+    if(CMAKE_OSX_ARCHITECTURES)
+        list(LENGTH CMAKE_OSX_ARCHITECTURES osx_architecture_count)
+        if(osx_architecture_count EQUAL 1 AND CMAKE_OSX_ARCHITECTURES MATCHES "^(arm64|aarch64|ARM64)$")
+            set(is_apple_arm64 TRUE)
+        endif()
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
+        set(is_apple_arm64 TRUE)
+    endif()
+endif()
+
+if(is_apple_arm64)
+    # Explicitly enable JUCE ARM NEON SIMD paths and Apple's Accelerate vDSP framework across every target.
+    add_compile_definitions(JUCE_USE_ARM_NEON=1 JUCE_USE_VDSP_FRAMEWORK=1)
+endif()
+
+if(APPLE
+   AND has_release
+   AND NOT AUDIOBATCH_SANITIZE
+)
+    # Strip unreachable Mach-O code sections in Release Ninja and Makefile links, matching Xcode dead-stripping.
+    add_link_options("$<$<CONFIG:Release>:-Wl,-dead_strip>")
+endif()
+
 if(MSVC)
     audiobatch_check_cpu_flag("/arch:AVX2" avx2_supported)
     if(NOT avx2_supported)
@@ -160,6 +189,38 @@ elseif(use_native)
         add_link_options("$<$<CONFIG:Release>:${flag}>")
     endforeach()
     message(STATUS "AudioBatch Release native CPU: ${native_flags}")
+elseif(has_release AND NOT AUDIOBATCH_SANITIZE)
+    set(explicit_target_cpu "${AUDIOBATCH_TARGET_CPU}")
+    if(explicit_target_cpu STREQUAL "" AND is_apple_arm64)
+        # Apple Silicon M1 (ARMv8.5-A) is the universal Apple Silicon baseline, providing NEON, FMA, FP16, and LSE.
+        set(explicit_target_cpu "apple-m1")
+    endif()
+    if(NOT explicit_target_cpu STREQUAL "")
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$" OR is_apple_arm64)
+            set(target_cpu_flags "-mcpu=${explicit_target_cpu}" "-mtune=${explicit_target_cpu}")
+        else()
+            set(target_cpu_flags "-march=${explicit_target_cpu}" "-mtune=${explicit_target_cpu}")
+        endif()
+        foreach(flag IN LISTS target_cpu_flags)
+            audiobatch_check_cpu_flag("${flag}" target_cpu_flag_supported)
+            if(NOT target_cpu_flag_supported)
+                message(FATAL_ERROR "AudioBatch target CPU flag ${flag} is not supported by this compiler.")
+            endif()
+            add_compile_options("$<$<AND:${cpu_languages},$<CONFIG:Release>>:${flag}>")
+            add_link_options("$<$<CONFIG:Release>:${flag}>")
+        endforeach()
+        message(STATUS "AudioBatch Release target CPU: ${target_cpu_flags}")
+    endif()
+endif()
+
+if(is_apple_arm64)
+    check_cxx_source_compiles(
+        "#if !defined(__ARM_NEON) || !defined(__ARM_FEATURE_FMA)\n#error Apple Silicon builds require ARM NEON and hardware FMA\n#endif\nint main() { return 0; }"
+        AUDIOBATCH_APPLE_ARM64_NEON_FMA
+    )
+    if(NOT AUDIOBATCH_APPLE_ARM64_NEON_FMA)
+        message(FATAL_ERROR "Apple Silicon arm64 builds require __ARM_NEON and __ARM_FEATURE_FMA")
+    endif()
 endif()
 
 if(NOT AUDIOBATCH_NATIVE_CPU)
