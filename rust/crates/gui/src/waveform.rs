@@ -16,7 +16,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use audiobatch_core::overload::OverloadHistory;
@@ -144,9 +144,12 @@ struct WaveformSource {
 
 /// Cached waveform projection reused across 60 FPS playhead-only redraws.
 #[derive(Clone, PartialEq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "Keys deliberately compare floating-point bit patterns"
+)]
 struct CachedWaveformKey {
-    overview_ptr: usize,
-    serato_ptr: usize,
+    duration_bits: u64,
     origin_x_bits: u32,
     origin_y_bits: u32,
     width_bits: u32,
@@ -158,6 +161,9 @@ struct CachedWaveformKey {
 
 /// Cached projected channel extents and optional Serato column colours.
 struct CachedWaveformProjection {
+    // Weak owners retain allocation identity without retaining the potentially large artifacts.
+    overview: Weak<WaveformOverview>,
+    serato: Option<Weak<Overview>>,
     key: CachedWaveformKey,
     channels: Vec<Vec<(f32, f32)>>,
     colours: Vec<Option<OverviewColour>>,
@@ -842,74 +848,101 @@ fn paint_placeholder(text: SharedString, plot: Bounds<Pixels>, window: &mut Wind
 /// Every column keeps at least one pixel of height, so silence shows as a line.
 /// With Serato colours each column is painted in its own colour, otherwise each envelope is one blue shape.
 fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
-    let Some(overview_arc) = data.overview.as_ref() else {
-        return;
-    };
-    let overview = overview_arc.as_ref();
+    CACHED_PROJECTION.with_borrow_mut(|cache| {
+        let Some(overview) = data.overview.as_ref() else {
+            return;
+        };
+        let cached = project_channels(
+            cache,
+            overview,
+            data.serato_overview.as_ref(),
+            data.source_duration,
+            data.display_gain,
+            viewport,
+        );
+        for extents in &cached.channels {
+            if cached.colours.is_empty() {
+                paint_envelope(extents, f32::from(viewport.plot.origin.x), window);
+            } else {
+                paint_coloured_columns(extents, &cached.colours, f32::from(viewport.plot.origin.x), window);
+            }
+        }
+    });
+}
+
+/// Projects immutable artifacts into one bounded cache slot, including every scalar affecting its output.
+fn project_channels<'cache>(
+    cache: &'cache mut Option<CachedWaveformProjection>,
+    overview: &Arc<WaveformOverview>,
+    serato: Option<&Arc<Overview>>,
+    duration: f64,
+    gain: f32,
+    viewport: &Viewport,
+) -> &'cache CachedWaveformProjection {
     let plot = viewport.plot;
     let columns = f32::from(plot.size.width) as usize;
     let channels = overview.channels().clamp(1, 2) as usize;
     let key = CachedWaveformKey {
-        overview_ptr: Arc::as_ptr(overview_arc) as usize,
-        serato_ptr: data
-            .serato_overview
-            .as_ref()
-            .map_or(0, |serato| Arc::as_ptr(serato) as usize),
+        duration_bits: duration.to_bits(),
         origin_x_bits: f32::from(plot.origin.x).to_bits(),
         origin_y_bits: f32::from(plot.origin.y).to_bits(),
         width_bits: f32::from(plot.size.width).to_bits(),
         height_bits: f32::from(plot.size.height).to_bits(),
         start_bits: viewport.start.to_bits(),
         length_bits: viewport.length.to_bits(),
-        gain_bits: data.display_gain.to_bits(),
+        gain_bits: gain.to_bits(),
     };
-    CACHED_PROJECTION.with_borrow_mut(|cache| {
-        let needs_recompute = cache.as_ref().is_none_or(|cached| cached.key != key);
-        if needs_recompute {
-            let lane_height = f32::from(plot.size.height) / channels as f32;
-            let half_height = lane_height * 0.5;
-            let half = (half_height - 1.0).max(0.5);
-            let sample_rate = f64::from(overview.sample_rate());
-            let start_frame = viewport.start * sample_rate;
-            let end_frame = (viewport.start + viewport.length) * sample_rate;
-            let colours = serato_column_colours(data, viewport, columns);
-            let scale = |value: f32| (value * data.display_gain).clamp(-1.0, 1.0);
-            let mut channel_extents = Vec::with_capacity(channels);
-            for channel in 0..channels {
-                let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
-                let center = lane_top + half_height;
-                let mut extents = overview.column_peaks(channel, start_frame, end_frame, columns);
-                for (minimum, maximum) in &mut extents {
-                    let top = scale(*maximum).mul_add(-half, center).min(center - 0.5);
-                    let bottom = scale(*minimum).mul_add(-half, center).max(center + 0.5);
-                    *minimum = top;
-                    *maximum = bottom;
-                }
-                channel_extents.push(extents);
+    let needs_recompute = cache.as_ref().is_none_or(|cached| {
+        cached.key != key
+            || !cached.overview.ptr_eq(&Arc::downgrade(overview))
+            || match (&cached.serato, serato) {
+                (Some(cached), Some(current)) => !cached.ptr_eq(&Arc::downgrade(current)),
+                (None, None) => false,
+                _ => true,
             }
-            *cache = Some(CachedWaveformProjection {
-                key,
-                channels: channel_extents,
-                colours,
-            });
-        }
-        if let Some(cached) = cache.as_ref() {
-            for extents in &cached.channels {
-                if cached.colours.is_empty() {
-                    paint_envelope(extents, f32::from(plot.origin.x), window);
-                } else {
-                    paint_coloured_columns(extents, &cached.colours, f32::from(plot.origin.x), window);
-                }
-            }
-        }
     });
+    if needs_recompute {
+        let lane_height = f32::from(plot.size.height) / channels as f32;
+        let half_height = lane_height * 0.5;
+        let half = (half_height - 1.0).max(0.5);
+        let sample_rate = f64::from(overview.sample_rate());
+        let start_frame = viewport.start * sample_rate;
+        let end_frame = (viewport.start + viewport.length) * sample_rate;
+        let colours = serato_column_colours(serato.map(AsRef::as_ref), duration, viewport, columns);
+        let scale = |value: f32| (value * gain).clamp(-1.0, 1.0);
+        let mut channel_extents = Vec::with_capacity(channels);
+        for channel in 0..channels {
+            let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
+            let center = lane_top + half_height;
+            let mut extents = overview.column_peaks(channel, start_frame, end_frame, columns);
+            for (minimum, maximum) in &mut extents {
+                let top = scale(*maximum).mul_add(-half, center).min(center - 0.5);
+                let bottom = scale(*minimum).mul_add(-half, center).max(center + 0.5);
+                *minimum = top;
+                *maximum = bottom;
+            }
+            channel_extents.push(extents);
+        }
+        *cache = Some(CachedWaveformProjection {
+            overview: Arc::downgrade(overview),
+            serato: serato.map(Arc::downgrade),
+            key,
+            channels: channel_extents,
+            colours,
+        });
+    }
+    cache.as_ref().expect("projection initialized")
 }
 
 /// Returns the Serato colour of each plot column, or nothing when the file has no Serato Overview.
 /// When the plot is wider than the colour limit, each colour covers several neighbouring columns.
-fn serato_column_colours(data: &PaintData, viewport: &Viewport, columns: usize) -> Vec<Option<OverviewColour>> {
-    let duration = data.source_duration;
-    let Some(serato_overview) = data.serato_overview.as_deref() else {
+fn serato_column_colours(
+    serato: Option<&Overview>,
+    duration: f64,
+    viewport: &Viewport,
+    columns: usize,
+) -> Vec<Option<OverviewColour>> {
+    let Some(serato_overview) = serato else {
         return Vec::new();
     };
     if duration <= 0.0 || columns == 0 {
@@ -1030,6 +1063,100 @@ mod test_artifact_presentation {
             waveform: Some(builder.finish(48_000, 4800)),
             ..AnalysisRecord::default()
         }
+    }
+
+    /// Supplies deterministic projection geometry independent of any allocator reuse or window renderer.
+    fn projection_viewport() -> Viewport {
+        Viewport {
+            start: 0.0,
+            length: 0.05,
+            plot: Bounds::new(point(px(0.0), px(0.0)), size(px(16.0), px(100.0))),
+        }
+    }
+
+    #[test]
+    fn projection_retains_weak_allocation_identities_across_owner_release() {
+        let first = record().waveform.expect("first overview");
+        let mut cache = None;
+        let viewport = projection_viewport();
+        let first_output = project_channels(&mut cache, &first, None, 0.1, 1.0, &viewport)
+            .channels
+            .clone();
+        let identity = cache.as_ref().expect("cache").overview.clone();
+        drop(first);
+        assert!(identity.upgrade().is_none(), "cache does not retain the artifact");
+        let mut builder = WaveformBuilder::new(1, Some(4800));
+        builder.push(&[&vec![0.75; 4800]]);
+        let second = builder.finish(48_000, 4800);
+        let second_output = project_channels(&mut cache, &second, None, 0.1, 1.0, &viewport);
+        assert!(!second_output.overview.ptr_eq(&identity));
+        assert_ne!(second_output.channels, first_output);
+        assert!(second_output.overview.ptr_eq(&Arc::downgrade(&second)));
+    }
+
+    #[test]
+    fn projection_reuses_unchanged_inputs_and_invalidates_gain_geometry_and_duration() {
+        let overview = record().waveform.expect("overview");
+        let serato = Arc::new(Overview::from_slices(vec![[1; 16], [100; 16], [200; 16], [50; 16]]));
+        let mut cache = None;
+        let mut viewport = projection_viewport();
+        let first = project_channels(&mut cache, &overview, Some(&serato), 0.1, 1.0, &viewport);
+        let allocation = first.channels[0].as_ptr();
+        let colours = first.colours.clone();
+        let extents = first.channels.clone();
+        assert_eq!(
+            project_channels(&mut cache, &overview, Some(&serato), 0.1, 1.0, &viewport).channels[0].as_ptr(),
+            allocation
+        );
+        assert_ne!(
+            project_channels(&mut cache, &overview, Some(&serato), 0.2, 1.0, &viewport).colours,
+            colours
+        );
+        assert_ne!(
+            project_channels(&mut cache, &overview, Some(&serato), 0.1, 0.5, &viewport).channels,
+            extents
+        );
+        viewport.plot.origin.y = px(20.0);
+        assert_ne!(
+            project_channels(&mut cache, &overview, Some(&serato), 0.1, 1.0, &viewport).channels,
+            extents
+        );
+        viewport.plot.size.width = px(8.0);
+        assert_eq!(
+            project_channels(&mut cache, &overview, Some(&serato), 0.1, 1.0, &viewport).channels[0].len(),
+            8
+        );
+    }
+
+    #[test]
+    fn projection_colours_follow_toggle_and_replacement_after_owner_release() {
+        let overview = record().waveform.expect("overview");
+        let first = Arc::new(Overview::from_slices(vec![[1; 16]; 4]));
+        let mut cache = None;
+        let viewport = projection_viewport();
+        let colours = project_channels(&mut cache, &overview, Some(&first), 0.1, 1.0, &viewport)
+            .colours
+            .clone();
+        let identity = cache.as_ref().expect("cache").serato.clone().expect("colour identity");
+        drop(first);
+        assert!(identity.upgrade().is_none());
+        let second = Arc::new(Overview::from_slices(vec![[200; 16]; 4]));
+        assert_ne!(
+            project_channels(&mut cache, &overview, Some(&second), 0.1, 1.0, &viewport).colours,
+            colours
+        );
+        assert_eq!(
+            project_channels(&mut cache, &overview, None, 0.1, 1.0, &viewport)
+                .colours
+                .len(),
+            0
+        );
+        assert_eq!(
+            project_channels(&mut cache, &overview, Some(&second), 0.1, 1.0, &viewport)
+                .colours
+                .len(),
+            16
+        );
     }
 
     /// Preserves navigation and transport state across a same-source artifact refresh so enrichment cannot disrupt use.
