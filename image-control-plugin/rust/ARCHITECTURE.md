@@ -36,7 +36,7 @@ logical geometry, and exclusively admitted DSP used by each host adapter.
 Stopped preparation installs saved targets and allocates processing state before callbacks begin.
 [`host/component.rs`](crates/plugin/src/host/component.rs) implements the VST3 interfaces on one COM object.
 The 31 sound-parameter IDs, conversions, defaults, and metadata live in [`params.rs`](crates/plugin/src/params.rs).
-Crossovers use a true logarithmic `f64` mapping, `20 * 1000^normalized`, without a frequency grid.
+Crossovers use a true logarithmic `f64` mapping, $20 \cdot 1000^{\mathrm{normalized}}$, without a frequency grid.
 Stepped controls use useful plain-unit snapping, not JUCE float emulation.
 Gain steps are 0.01 dB, Width steps are 0.01, and Recover/Pan steps are one percentage point.
 Current-schema recalls preserve accepted off-grid normalized bits until explicitly edited.
@@ -244,6 +244,13 @@ Reported points stay within 20 Hz through 20 kHz and available bins below Nyquis
 Analysis starts at each tier's first hop using zero-filled preceding history.
 Input spans stop at exact shared deadlines, making observations independent of host block and worker chunk sizes.
 Non-finite channel samples become silence independently without restarting the clock.
+
+The shared [analysis response timing](../ARCHITECTURE.md#analysis-response-timing)
+and [per-tier timing table](../ARCHITECTURE.md#multi-resolution-spatial-analysis) also apply to this analyzer.
+At 48 kHz the lowest tier updates every 42.7 ms but spans 682.7 ms of Hann-weighted history,
+with approximately 341.3 ms of window-center lag.
+Bass therefore builds more slowly despite frames starting after the first hop, not after a full window.
+Worker delivery, redraw scheduling, and display persistence affect visible timing separately from analysis.
 
 One complex FFT packs Left and Right into real and imaginary components.
 Its transform length is twice the window length, adding interpolation rather than true frequency resolution.

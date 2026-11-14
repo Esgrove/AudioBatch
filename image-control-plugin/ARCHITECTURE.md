@@ -189,17 +189,21 @@ Crossover requests are reordered and published only when needed,
 while an offline-mode transition still completes outstanding design work.
 
 For stereo input, the imaging representation is
-\[
-M = (L + R) / 2, \qquad S = (L - R) / 2.
-\]
+
+$$
+M = \frac{L + R}{2}, \qquad S = \frac{L - R}{2}.
+$$
+
 Each signal is divided into four complementary bands.
 Source Mid and Side gains are applied before Width/Recover, followed by reconstruction into left and right,
 then per-band Pan and Solo contribution, summation, output gain, Delta, the global Mono fold, and the Post tap.
-For a band with source trims \(g_M\) and \(g_S\), Width \(w\), and linear Recover \(r\),
-\[
+For a band with source trims $g_M$ and $g_S$, Width $w$, and linear Recover $r$,
+
+$$
 M' = g_M M + r\max(0, 1-w)g_S Q(S), \qquad S' = w g_S S.
-\]
-Here \(Q(S)\) is the band's finite quadrature-rotated Side signal aligned with its ordinary Mid and Side.
+$$
+
+Here $Q(S)$ is the band's finite quadrature-rotated Side signal aligned with its ordinary Mid and Side.
 The recovery coefficient follows removed waveform amplitude, not removed power.
 At Width 0.5 and Recover 100%, it adds half of the phase-rotated, source-trimmed Side into Mid.
 Recover 200% doubles that contribution, a 6.0206 dB amplitude increase relative to Recover 100%,
@@ -216,10 +220,12 @@ Mono input uses the Mid path and ignores Width, Recover, and Pan.
 Only matching mono-to-mono and stereo-to-stereo main bus layouts are supported.
 
 Pan transfers signal rather than simply attenuating one channel.
-For a rightward pan amount \(p\) between 0 and 1,
-\[
+For a rightward pan amount $p$ between 0 and 1,
+
+$$
 L' = (1-p)L, \qquad R' = R + pL.
-\]
+$$
+
 Leftward pan mirrors this operation.
 A fully panned shared signal can therefore peak 6 dB higher in the receiving channel.
 The processor neither limits nor clips floating-point output to prevent that boost.
@@ -239,19 +245,23 @@ The design samples that response on an FFT grid four times the kernel half-lengt
 inverse-transforms it, centers the impulse response, applies a four-term Blackman-Harris window,
 and normalizes the taps to unity DC gain before rounding to float.
 
-The half-length \(H\) is 4096 samples through 48 kHz.
+The half-length $H$ is 4096 samples through 48 kHz.
 It doubles for each doubling above that reference rate, retaining approximately the same frequency resolution.
-The complete kernel has \(2H+1\) taps.
+The complete kernel has $2H+1$ taps.
 At 48 kHz it is 8193 taps long.
 
-Three lowpass outputs \(F_0\), \(F_1\), and \(F_2\), together with the input delayed by \(H\), define the bands:
-\[ B_0=F_0, \quad B_1=F_1-F_0, \quad B_2=F_2-F_1, \quad B_3=x_H-F_2. \]
+Three lowpass outputs $F_0$, $F_1$, and $F_2$, together with the input delayed by $H$, define the bands:
+
+$$
+B_0=F_0, \quad B_1=F_1-F_0, \quad B_2=F_2-F_1, \quad B_3=x_H-F_2.
+$$
+
 Their algebraic sum is the delayed input, independent of crossover placement.
 A separate neutral shortcut preserves bit-exact output rather than relying on floating-point cancellation.
 
 ### Finite quadrature recovery
 
-Recovery uses odd-length, Type III antisymmetric FIRs with the same half-length \(H\) as the ordinary crossover kernels.
+Recovery uses odd-length, Type III antisymmetric FIRs with the same half-length $H$ as the ordinary crossover kernels.
 `designQuadratureKernel` samples an imaginary spectrum on the same four-times-half-length FFT grid.
 Positive-frequency bins contain minus the target magnitude, conjugate negative-frequency bins contain plus the magnitude,
 and the DC and Nyquist bins are zero.
@@ -269,7 +279,8 @@ The high band is the fullband quadrature output minus the highest quadrature low
 Their algebraic sum is the fullband quadrature output, not the delayed original Side.
 The ordinary and quadrature Side kernels read the same raw Side spectral history.
 The quadrature branch does not filter an already filtered or delayed band, so it is not a cascaded Hilbert stage.
-Its fixed finite support adds no extra convolution delay or tail beyond the existing \(H+P\) latency and \(H/f_s\) tail.
+Its fixed finite support adds no extra convolution delay or tail.
+Latency remains $H+P$, with a tail of $\frac{H}{f_s}$.
 
 Antisymmetry makes the quadrature response zero at DC and Nyquist.
 The fullband filter tests bound gain error to 0.00055 from unity on logarithmic 20 Hz to 20 kHz grids,
@@ -279,7 +290,7 @@ These are sampled response bounds, not a continuous-frequency proof or a percept
 The lowest legal 20 Hz crossover retains its finite transition and is not normalized as an ordinary DC-passing lowpass.
 Finite-band quadrature is not lossless recovery, loudness matching, automatic gain compensation, or a peak limiter.
 For arbitrary source phases, recovered Side can cancel with source Mid or add to it and raise peaks.
-Quadrature reduces the channel bias of direct addition, where full \(M+S\) recovery would simply select the original Left.
+Quadrature reduces the channel bias of direct addition, where full $M+S$ recovery would simply select the original Left.
 It does not make arbitrary Mid and Side signals orthogonal or preserve their combined power.
 The overlapping crossover bands are amplitude-complementary, not an orthogonal energy decomposition.
 Recovery is not invariant under swapping L/R, which reverses Side while leaving Mid unchanged.
@@ -288,7 +299,7 @@ Global polarity inversion remains consistent with the linear signal law for fixe
 ### Partitioned convolution and latency
 
 [`PartitionedConvolver.cpp`](src/dsp/PartitionedConvolver.cpp) implements uniform overlap-save convolution.
-The processing partition \(P\) is 256 samples and the transform size is \(2P=512\).
+The processing partition $P$ is 256 samples and the transform size is $2P=512$.
 Each kernel partition is zero-padded and transformed once during kernel design.
 Each Mid or Side input partition is transformed together with the previous partition and retained in a spectral ring.
 All three ordinary filters reuse that input transform and history.
@@ -309,10 +320,10 @@ JUCE supplies the platform FFT implementation.
 `MultibandImager::process` adapts any host block length by filling an input partition
 while returning samples from the already computed output partition.
 It never resizes buffers according to the incoming block length.
-That adapter adds one partition of latency, giving \(H+P\) reported samples.
+That adapter adds one partition of latency, giving $H+P$ reported samples.
 At 48 kHz this is 4352 samples, about 90.7 ms.
 A delay ring aligns the dry reference with the filtered signals before the partition output delay.
-The finite tail beyond the latency-compensated endpoint is bounded by \(H/f_s\) seconds.
+The finite tail beyond the latency-compensated endpoint is bounded by $\frac{H}{f_s}$ seconds.
 Tail reporting remains conservative regardless of current gains or solos.
 
 ### Kernel replacement and offline rendering
@@ -359,7 +370,7 @@ Both the exposed host bypass parameter and `processBlockBypassed` use this path.
 Delta subtracts an aligned ordinary dry reference from the processed result, including Width/Recover.
 With solos active, its dry reference contains only the selected bands.
 Mono runs last in `ImageControlProcessor`, before the Post analyzer tap.
-It smoothly folds the full processed output to \((L+R)/2\) in both channels, including after Delta or bypass.
+It smoothly folds the full processed output to $\frac{L+R}{2}$ in both channels, including after Delta or bypass.
 The saved, automatable `mono` parameter has version hint 5 and defaults to off for states without it.
 Its 20 ms ramp applies identically in real-time and offline callbacks.
 Preparation and reset initialize the blend from the parameter so an enabled fold applies from the first output sample.
@@ -434,19 +445,65 @@ Completion tickets let tests observe a finished pass without consuming audio the
 ## Multi-resolution spatial analysis
 
 [`SpatialAnalyzer`](src/analysis/SpatialAnalyzer.h) retains stereo history and runs six independent analysis tiers.
-At rates through 48 kHz, the window lengths and reported ranges are:
+At rates through 48 kHz, the window and hop sample counts are fixed.
+**Window samples** is the number of recent audio samples per channel analyzed in each frame.
+A longer window resolves nearby frequencies more finely but spreads changes over a longer history.
+It excludes the zero padding used to interpolate the FFT spectrum.
+**Hop samples** is the number of new audio samples per channel between successive analysis frames.
+It sets the update interval, not the amount of history analyzed.
+Because each hop is shorter than its window, successive windows overlap and reuse earlier samples.
+The following durations are at 48 kHz, rounded to one decimal place:
 
-- 32768 samples below 80 Hz, advancing by 2048 samples.
-- 16384 samples from 80 to 160 Hz, advancing by 1024 samples.
-- 8192 samples from 160 to 320 Hz, advancing by 512 samples.
-- 4096 samples from 320 to 640 Hz, advancing by 512 samples.
-- 2048 samples from 640 Hz to 4 kHz, advancing by 512 samples.
-- 1024 samples above 4 kHz, advancing by 512 samples.
+| Frequency range | Window samples | Hop samples | Window duration (ms) | Approx. center lag (ms) | Update interval (ms) |
+|-----------------|----------------|-------------|----------------------|-------------------------|----------------------|
+| 20 to 80 Hz     | 32768          | 2048        | 682.7                | 341.3                   | 42.7                 |
+| 80 to 160 Hz    | 16384          | 1024        | 341.3                | 170.7                   | 21.3                 |
+| 160 to 320 Hz   | 8192           | 512         | 170.7                | 85.3                    | 10.7                 |
+| 320 to 640 Hz   | 4096           | 512         | 85.3                 | 42.7                    | 10.7                 |
+| 640 Hz to 4 kHz | 2048           | 512         | 42.7                 | 21.3                    | 10.7                 |
+| 4 to 20 kHz     | 1024           | 512         | 21.3                 | 10.7                    | 10.7                 |
 
 Windows and hops double with each sample-rate doubling above 48 kHz.
 Input writes stop at exact hop deadlines, so callback window endpoints do not depend on input span boundaries.
 The reported frequency range is limited to 20 Hz through 20 kHz and available FFT bins below Nyquist.
-These display windows do not add audio-processing latency, but long bass windows respond more slowly.
+These display windows do not add audio-processing latency.
+
+### Analysis response timing
+
+For window length $N$, hop length $h$, and sample rate $f_s$, the timing in seconds is
+
+$$
+T_{\mathrm{window}} = \frac{N}{f_s}, \qquad
+T_{\mathrm{center}} \approx \frac{N}{2f_s}, \qquad
+T_{\mathrm{update}} = \frac{h}{f_s}.
+$$
+
+Each frame analyzes the newest window ending at its audio endpoint, rather than looking ahead.
+The Hann window weights samples near its middle most strongly and suppresses samples near its ends.
+Center lag describes the approximate age of those most strongly weighted samples, not a fixed onset delay.
+A transient therefore tends to become brightest as it reaches the middle of the window.
+The next analysis deadline can add up to one hop to that response.
+The lowest tier updates every 42.7 ms at 48 kHz, but represents 682.7 ms of history.
+Its strongest transient response is roughly 341.3 ms behind the newest input,
+which explains why bass appears to build more slowly than the upper frequencies.
+
+After clearing history, each tier emits its first frame after one hop using zero-filled preceding samples.
+It does not wait for a complete window of signal.
+A newly sustained signal gradually fills the Hann-weighted history over one window duration.
+How soon it becomes visible depends on level, frequency, display contrast, and the automatic reference.
+Window duration is therefore not a guaranteed wait before the first visible point.
+
+At 44.1 kHz the sample counts are the same, so all table durations scale by $\frac{48}{44.1}$.
+The lowest tier then spans 743.0 ms, has approximately 371.5 ms of center lag, and updates every 46.4 ms.
+Doubling window and hop sizes makes 88.2 kHz share those timings and 96 kHz share the 48 kHz timings.
+Other rates use the actual scaled sample counts in the formulas above.
+
+These are audio-time analysis durations, not measured end-to-end screen latency.
+Host block delivery, FIFO backlog, worker scheduling, and the next GPU redraw add display delay.
+Persistence retains previous observations and can make a change appear slower without changing analysis deadlines.
+The Post tap also observes the processor's already-delayed output, unlike the Pre tap.
+
+### Spectral estimation
 
 Each tier packs left samples into the real part and right samples into the imaginary part of one complex FFT input.
 The transform is twice the window length, providing zero-padding interpolation rather than additional true resolution.
