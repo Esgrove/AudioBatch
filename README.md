@@ -42,6 +42,30 @@ and VST3/Audio Unit checkboxes, supporting `--sign` and `--notarize`.
 Distribution has a fixed `apple-m1` baseline. Local builds remain native.
 `--no-build` requires unchanged artifacts from a successful distribution build, not local build outputs.
 
+### macOS signing setup
+
+Developer ID distribution needs no App ID or App Store Connect record, only two certificates and a notary profile.
+Set this up once per Mac:
+
+1. In Xcode, open Settings → Accounts, select the team, and choose Manage Certificates.
+   Add **Developer ID Application** and **Developer ID Installer**.
+   The private keys stay in the login keychain of that Mac.
+   To use another Mac, export both certificates with their keys from Keychain Access as a `.p12` and import it there.
+2. Create an app-specific password at [appleid.apple.com](https://appleid.apple.com) and store a notary profile:
+
+   ```shell
+   xcrun notarytool store-credentials audiobatch-notary --apple-id <apple-id> --team-id <team-id>
+   ```
+
+3. Check the exact identity names with `security find-identity -v -p basic | grep "Developer ID"`,
+   then copy [`.env.local.example`](.env.local.example) to the git-ignored `.env.local` and fill it in.
+   `common.sh` loads it, and variables already set in the environment override it.
+   Set `CODESIGN_IDENTITY` and `INSTALLER_SIGN_IDENTITY`
+   when the certificate names differ from `Developer ID Application: <org> (<team-id>)`
+   and `Developer ID Installer: <org> (<team-id>)`.
+
+Then run `./package-macos.sh --notarize`.
+
 ## Formats And Compatibility
 
 Both applications read WAV, AIFF, FLAC, and MP3 and write normalized or processed output as AIFF.

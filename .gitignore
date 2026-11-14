@@ -78,3 +78,6 @@
 
 # Other
 *.pdf
+
+# Local Apple signing settings
+/.env.local

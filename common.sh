@@ -288,7 +288,30 @@ install_shell_completions() {
     done
 }
 
+# Load KEY=VALUE lines from the git-ignored .env.local in the repository root.
+# Variables that are already set in the environment take precedence over the file.
+load_env_local() {
+    local file="$REPO_ROOT/.env.local" line key value
+    [ -f "$file" ] || return 0
+    print_green "Found $file, using its values for variables not set in the environment" >&2
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        case "$line" in
+            '' | '#'*) continue ;;
+        esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        value="${value%\"}"
+        value="${value#\"}"
+        if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && [ -z "${!key+x}" ]; then
+            export "$key=$value"
+        fi
+    done < "$file"
+}
+load_env_local
+
 # Placeholder Apple Developer account configuration for macOS Developer ID signing and notarization.
+# Values come from the environment, then .env.local, then these defaults.
 # Local builds remain ad-hoc (-) by default until CODESIGN_IDENTITY or --sign/--notarize is requested.
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-TEAMID0000}"
 APPLE_ID="${APPLE_ID:-developer@example.com}"
