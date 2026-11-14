@@ -811,7 +811,7 @@ PluginProcessingResult processFileWithPlugins(
     }
 
     if (written->clipped) {
-        const juce::String clippingNotice {"Output clipping: final render exceeded the 16-bit PCM range"};
+        const juce::String clippingNotice {"Output clipping: the final render exceeded the 16-bit range"};
         notices.add(clippingNotice);
         utils::logWarn("Plugin processing warning: {}, {}", outputFile.getFullPathName().quoted(), clippingNotice);
     }
