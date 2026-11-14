@@ -9,6 +9,7 @@
 //! The normalization mode and its peak and loudness targets are kept here too.
 //! They are stored as JSON in the Rust-specific `AudioBatch-rs` data directory.
 //! A missing or unreadable file gives the defaults, so a broken file never stops the app from starting.
+//! An unreadable file is kept beside the original with an `.invalid` suffix, so saving the defaults loses nothing.
 
 use std::fs;
 use std::path::Path;
@@ -26,6 +27,9 @@ use crate::results::{ColumnKey, ResultsDelegate, SOURCE_STATISTICS_COLUMNS};
 
 /// Lowest loudness the graph axis accepts, in LUFS.
 pub const LOUDNESS_LIMIT_MINIMUM: i32 = -60;
+
+/// Suffix of the backup that keeps an unreadable settings file instead of overwriting it with the defaults.
+const INVALID_SETTINGS_SUFFIX: &str = ".invalid";
 
 /// Highest loudness the graph axis accepts, in LUFS.
 pub const LOUDNESS_LIMIT_MAXIMUM: i32 = 6;
@@ -179,12 +183,21 @@ impl GuiSettings {
     /// and a normalization target outside its range is clamped into it.
     /// A saved column choice from before the Folder column hides the Path column once,
     /// so existing users get the new default and can show Path again from the Columns menu.
+    /// A file that exists but cannot be read or parsed is renamed with an `.invalid` suffix and logged,
+    /// so the next save does not silently replace the preferences it held.
     #[must_use]
     pub fn load_from(path: &Path) -> Self {
-        let mut settings: Self = fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default();
+        let mut settings: Self = match fs::read_to_string(path) {
+            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|error| {
+                preserve_invalid_file(path, &error.to_string());
+                Self::default()
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(error) => {
+                preserve_invalid_file(path, &error.to_string());
+                Self::default()
+            }
+        };
         if let Some(hidden) = &mut settings.hidden_columns {
             let mut hide = |key: ColumnKey| {
                 let id = ResultsDelegate::column_identifier(key);
@@ -266,6 +279,24 @@ impl Default for GuiSettings {
             controls_width_scale: DEFAULT_CONTROLS_WIDTH_SCALE,
             information_width_scale: DEFAULT_INFORMATION_WIDTH_SCALE,
         }
+    }
+}
+
+/// Keeps an unusable settings file beside the original as `<name>.invalid`, replacing an older backup,
+/// so the user can recover its values after the defaults are saved over the original path.
+fn preserve_invalid_file(path: &Path, reason: &str) {
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(INVALID_SETTINGS_SUFFIX);
+    match fs::rename(path, &backup) {
+        Ok(()) => tracing::warn!(
+            "Settings file {} could not be read ({reason}), so it was kept as {} and the defaults are used",
+            path.display(),
+            Path::new(&backup).display()
+        ),
+        Err(error) => tracing::warn!(
+            "Settings file {} could not be read ({reason}) or kept as a backup ({error}), so the defaults are used",
+            path.display()
+        ),
     }
 }
 
@@ -372,6 +403,25 @@ mod test_settings_file {
         assert_eq!(GuiSettings::load_from(&path), GuiSettings::default());
         fs::write(&path, "not json").expect("writes the file");
         assert_eq!(GuiSettings::load_from(&path), GuiSettings::default());
+    }
+
+    #[test]
+    fn invalid_files_are_kept_as_a_backup_before_defaults_are_saved() {
+        let directory = tempfile::tempdir().expect("creates a temporary directory");
+        let path = directory.path().join(SETTINGS_FILE_NAME);
+        let backup = directory
+            .path()
+            .join(format!("{SETTINGS_FILE_NAME}{INVALID_SETTINGS_SUFFIX}"));
+        let broken = r#"{"sample_rate": "48000", "show_loudness_graph": true}"#;
+        fs::write(&path, broken).expect("writes the file");
+        assert_eq!(GuiSettings::load_from(&path), GuiSettings::default());
+        assert!(!path.exists());
+        assert_eq!(fs::read_to_string(&backup).expect("keeps the backup"), broken);
+
+        GuiSettings::default().save_to(&path).expect("saves the defaults");
+        fs::write(&path, "{").expect("writes a newer broken file");
+        let _ = GuiSettings::load_from(&path);
+        assert_eq!(fs::read_to_string(&backup).expect("replaces the backup"), "{");
     }
 
     #[test]

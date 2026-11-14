@@ -104,6 +104,7 @@ private:
 
     void runOutputOwnershipTests();
     void runRecoveryPreservationTests();
+    void runSettingsBackupTests();
     void runSourceSafetyTests();
     void runWrittenAudioValidationTests(const juce::File& root);
 };
@@ -249,12 +250,37 @@ void UtilsTests::runConcurrentDirectoryTests()
     }
 }
 
+/// Checks that a settings file JUCE cannot read is kept as a backup instead of being overwritten with defaults.
+void UtilsTests::runSettingsBackupTests()
+{
+    beginTest("An unreadable settings file is kept as a backup before defaults are saved over it");
+    const TemporaryDirectory settingsDirectory;
+    const auto storageRoot = settingsDirectory.getChildFile("storage");
+    const auto settingsFile = utils::createApplicationSettingsOptions(storageRoot).getDefaultFile();
+    expect(settingsFile.getParentDirectory().createDirectory());
+    const auto backup = settingsFile.getSiblingFile(settingsFile.getFileName() + ".invalid");
+
+    expect(settingsFile.replaceWithText(R"(<PROPERTIES><VALUE name="kept" val="1"/></PROPERTIES>)"));
+    static_cast<void>(utils::createApplicationSettingsOptions(storageRoot));
+    expect(settingsFile.existsAsFile() && !backup.exists());
+
+    expect(settingsFile.replaceWithText(R"(<PROPERTIES><VALUE name="broken")"));
+    static_cast<void>(utils::createApplicationSettingsOptions(storageRoot));
+    expect(!settingsFile.exists());
+    expectEquals(backup.loadFileAsString(), juce::String(R"(<PROPERTIES><VALUE name="broken")"));
+
+    expect(settingsFile.replaceWithText("not xml"));
+    static_cast<void>(utils::createApplicationSettingsOptions(storageRoot));
+    expectEquals(backup.loadFileAsString(), juce::String("not xml"));
+}
+
 /// Runs the helper checks.
 void UtilsTests::runTest()
 {
     const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory);
     runCallbackAccessTests();
     runConcurrentDirectoryTests();
+    runSettingsBackupTests();
 
     beginTest("Startup flags recognize complete options and their short aliases");
     {
