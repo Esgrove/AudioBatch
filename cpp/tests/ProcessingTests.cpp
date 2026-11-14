@@ -702,7 +702,10 @@ void ProcessingTests::runTest()
         TestPlugin plugin({.producesQuantizationPattern = true});
         const auto result = process(source, {&plugin});
         expect(!result.hasError(), outcomeError(result.outcome));
-        expect(outcomeNotice(result.outcome).contains("Output clipping"), outcomeNotice(result.outcome));
+        expect(
+            outcomeNotice(result.outcome).contains("Output clipping: the final render exceeded the 16-bit range"),
+            outcomeNotice(result.outcome)
+        );
         const auto reader = utils::createAudioReader(outcomeRecord(result.outcome).file);
         expect(reader != nullptr);
         if (reader != nullptr) {
@@ -767,7 +770,9 @@ void ProcessingTests::runTest()
             peakDecibels(outcomeRecord(result.outcome)) > -0.1,
             juce::String(peakDecibels(outcomeRecord(result.outcome)))
         );
-        expect(outcomeNotice(result.outcome).contains("Output clipping"), outcomeNotice(result.outcome));
+        expectEquals(
+            outcomeNotice(result.outcome), juce::String("Output clipping: the final render exceeded the 16-bit range")
+        );
         expect(std::ranges::any_of(capture.getMessages(), [&](const auto& message) {
             return message.endsWith(
                 utils::format(
