@@ -1,7 +1,7 @@
 # AGENTS.md
 
 This file governs everything under `rust/`, the Rust version of AudioBatch.
-`../cpp/AGENTS.md` describes the C++ application in `../cpp/`, the reference implementation of AudioBatch.
+`../cpp/AGENTS.md` describes the C++ application in `../cpp/`, the other, equal implementation of AudioBatch.
 Its build, format, lint, and CMake instructions do not apply here.
 Its prose style, naming, and documentation rules do.
 When the two files disagree about code under `rust/`, this file wins.
@@ -11,8 +11,8 @@ When the two files disagree about code under `rust/`, this file wins.
 - Follow the repository-wide [behavioral parity rules](../AGENTS.md#behavioral-parity).
   Differences in results for the same input are bugs unless a narrow, technically justified exception is documented.
 - Read the C++ sources freely to understand how a feature behaves.
-  The C++ application is a reference,
-  not an oracle that overrides the file format or independently verified expectations.
+  Neither application is a reference, and the file format and independently verified expectations decide what is correct.
+  When the two differ, fix the worse side, and do not make the Rust code worse merely to match C++.
   Question anything that looks wrong before carrying it over, and fix a confirmed bug in both applications.
   `../cpp/src/analysis/AudioAnalysis.cpp`, `../cpp/src/analysis/AnalysisCache*.cpp`, and `../cpp/src/cli/`
   are the closest counterparts of `crates/core` and `crates/cli`, and `../cpp/src/plugins/`

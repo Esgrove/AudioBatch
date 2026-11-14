@@ -75,7 +75,8 @@ Do not invoke specialized Bugbot or security-review agents unless the user expli
 
 - Correctness and preservation of meaningful C++/Rust results for the same supported input and operation.
   Validate parsed metadata, source values versus presentation fallbacks, names, positions, colors, and numeric results.
-  C++ is a reference implementation, not an oracle over independently verified file-format expectations.
+  Neither implementation is a reference or an oracle over independently verified file-format expectations.
+  When they differ, recommend fixing the worse side, and do not propose degrading one to match the other.
 - DSP precision and operation order, bit-exact true peak, documented loudness and normalization tolerances,
   channel handling, quantization, latency compensation, tail draining, cancellation, and no-op decisions.
   Do not propose relaxed tolerances or implementation-specific expected values to hide divergence.
