@@ -167,13 +167,19 @@ write_distribution_xml() {
     <organization>com.esgrove</organization>
     <options customize="always" require-scripts="false" hostArchitectures="arm64" rootVolumeOnly="true"/>
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
-    <volume-check>
-        <allowed-os-versions>
-            <os-version min="15.0"/>
-        </allowed-os-versions>
-    </volume-check>
-    <background file="icon_mac.png" mime-type="image/png" alignment="bottomleft" scaling="proportional"/>
-    <background-darkAqua file="icon_mac.png" mime-type="image/png" alignment="bottomleft" scaling="proportional"/>
+    <installation-check script="installation_check()"/>
+    <script>
+        function installation_check() {
+            if (system.compareVersions(system.version.ProductVersion, "15.0") == -1) {
+                my.result.type = "Fatal";
+                my.result.message = "macOS 15.0 or newer is required.";
+                return false;
+            }
+            return true;
+        }
+    </script>
+    <background file="icon_mac.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
+    <background-darkAqua file="icon_mac.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
     <license file="LICENSE.txt" mime-type="text/plain"/>
     <choices-outline>
         <line choice="choice_app"/>
@@ -264,7 +270,7 @@ package_cpp_macos() {
     chmod 644 "$cli_root/usr/local/share/zsh/site-functions/_audiobatch"
 
     cp "$REPO_ROOT/LICENSE" "$resources_dir/LICENSE.txt"
-    cp "$REPO_ROOT/assets/icon_mac.png" "$resources_dir/icon_mac.png"
+    write_mac_installer_logo "$REPO_ROOT/assets/icon_mac.png" "$resources_dir/icon_mac.png"
 
     print_magenta "Building component packages for AudioBatch $version..."
     build_mac_bundle_component_pkg \

@@ -227,11 +227,17 @@ write_distribution_xml() {
     <organization>com.esgrove</organization>
     <options customize="always" require-scripts="$require_scripts" hostArchitectures="arm64" rootVolumeOnly="true"/>
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
-    <volume-check>
-        <allowed-os-versions>
-            <os-version min="15.0"/>
-        </allowed-os-versions>
-    </volume-check>
+    <installation-check script="installation_check()"/>
+    <script>
+        function installation_check() {
+            if (system.compareVersions(system.version.ProductVersion, "15.0") == -1) {
+                my.result.type = "Fatal";
+                my.result.message = "macOS 15.0 or newer is required.";
+                return false;
+            }
+            return true;
+        }
+    </script>
     <license file="LICENSE.txt" mime-type="text/plain"/>
     <choices-outline>
 EOF

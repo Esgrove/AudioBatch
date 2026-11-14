@@ -669,6 +669,15 @@ build_mac_bundle_component_pkg() {
     pkgbuild "${pkg_args[@]}" "$output_pkg" > /dev/null
 }
 
+# Write the installer background logo, a small PNG that the installer draws unscaled in the bottom left corner.
+# The icon is downscaled because the installer would otherwise show it at its full size over the whole window.
+write_mac_installer_logo() {
+    local source_png="$1"
+    local output_png="$2"
+    require_command sips
+    sips --resampleHeightWidthMax 128 "$source_png" --out "$output_png" > /dev/null
+}
+
 # Assemble, optionally sign with Developer ID Installer, and optionally notarize + staple a productbuild .pkg archive.
 finalize_mac_distribution_pkg() {
     local distribution_xml="$1"
