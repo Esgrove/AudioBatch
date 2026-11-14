@@ -114,7 +114,7 @@ and true-peak interpolation coefficient calculation include adaptations from ebu
 Its complete copyright and MIT license notice is in [`crates/core/licenses/ebur128.txt`](crates/core/licenses/ebur128.txt).
 With [cargo-about](https://github.com/EmbarkStudios/cargo-about) and jq installed,
 `THIRD-PARTY-NOTICES.txt` adds the licenses of every compiled crate, the bundled SQLite, and the Roboto fonts.
-Install cargo-about with `cargo install --locked cargo-about --features cli`. `package-macos.sh` requires it.
+`package-macos.sh` requires both tools, installed as described in [Required Tools](#required-tools).
 `build.sh` copies both files into `audiobatch-rs-licenses/` beside the loose binaries,
 and `install.sh` copies them into the same directory beside the installed CLI.
 macOS app bundles include them in `Contents/Resources/licenses/`, and Windows GUI installations in `licenses/`.
@@ -709,12 +709,16 @@ Preview decoding calls the decoder directly, so one of these files can end its d
 ```shell
 cargo install --locked cargo-nextest
 cargo install --locked cargo-llvm-cov
+cargo install --locked cargo-about --features cli
 cargo install --locked cargo-fuzz
 cargo install --locked samply
 rustup component add llvm-tools-preview
 rustup toolchain install nightly --component miri,rust-src
 ```
 
+[cargo-about](https://github.com/EmbarkStudios/cargo-about) generates the crate licenses in `THIRD-PARTY-NOTICES.txt`,
+together with jq, and `package-macos.sh` requires both.
+Its binary needs the `cli` feature.
 [samply](https://github.com/mstange/samply) records sampling profiles of release or profiling builds.
 It is a development tool, not a runtime dependency.
 See [Analysis performance](../docs/performance.md#reproducing-the-measurements) for profiling commands.
