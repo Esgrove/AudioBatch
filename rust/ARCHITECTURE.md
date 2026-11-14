@@ -830,7 +830,7 @@ The result goes to `plugins.json`, which the CLI and the GUI share.
 
 ## Differences from the C++ version
 
-The C++ application in `../cpp` is the reference implementation.
+The C++ application in `../cpp` is an equal implementation of AudioBatch, and neither is a reference for the other.
 The Rust version differs from it on purpose in these points:
 
 - It hosts VST3 and CLAP plugins on macOS and Windows, with mixed-format chains in the GUI and CLI.

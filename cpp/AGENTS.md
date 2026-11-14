@@ -2,7 +2,7 @@
 
 AudioBatch is a JUCE-based C++23 application for analyzing and batch processing audio files.
 This file governs the C++ project in `cpp/`, and paths below are relative to it unless they start with `../`.
-The Rust port lives next to it in `../rust`, and the root `AGENTS.md` describes the repository layout.
+The Rust application lives next to it in `../rust`, and the root `AGENTS.md` describes the repository layout.
 Run the build, format, lint, and test commands below from `cpp/`.
 
 It builds two deliverables from a shared core:
@@ -259,7 +259,7 @@ Tests:
   which run the real main view with copied fixtures and temporary storage.
 - `AudioBatchRealtimeTests`, built from `tests/RealtimeTests.cpp` only in the `macos-rtsan` preset,
   holds the RealtimeSanitizer preview callback scenarios that `./sanitize.sh --realtime` runs.
-- `../fixtures/` at the repository root holds small committed audio files, shared with the Rust port:
+- `../fixtures/` at the repository root holds small committed audio files, shared with the Rust application:
   one second 1 kHz tones at -6.02 dBFS in WAV, AIFF, FLAC, and MP3, mono and stereo,
   at several sample rates and bit depths, plus a tagged FLAC file, digital silence, a short three channel AIFF,
   a single click at a known sample in WAV and MP3 for checking that the start of the audio stays in place,

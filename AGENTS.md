@@ -3,9 +3,9 @@
 AudioBatch analyzes and batch processes audio files.
 This repository holds two versions of it side by side, each with its own agent instructions:
 
-- `cpp/`: the C++23 and JUCE application, the reference implementation.
+- `cpp/`: the C++23 and JUCE application.
   Read [`cpp/AGENTS.md`](cpp/AGENTS.md) before changing anything under `cpp/`.
-- `rust/`: the Rust port. Read [`rust/AGENTS.md`](rust/AGENTS.md) before changing anything under `rust/`.
+- `rust/`: the Rust application. Read [`rust/AGENTS.md`](rust/AGENTS.md) before changing anything under `rust/`.
 
 Each version also has an `ARCHITECTURE.md`, [`cpp/ARCHITECTURE.md`](cpp/ARCHITECTURE.md) and [`rust/ARCHITECTURE.md`](rust/ARCHITECTURE.md),
 which explains how its parts work together.
@@ -171,7 +171,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and basic file checks through [prek](https://prek.j178.dev).
 - CI builds, tests, lints, format-checks, sanitizes, fuzzes, and measures coverage of the applications and plugins.
   It runs no benchmarks and no tests of the scripts themselves.
-  `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
+  `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust application.
   Their path filters include their own project, fixtures, the test plugin, assets, shared shell helpers,
   the root `tests/` scripts, and their workflow files, and exclude Markdown-only changes.
   The C++ workflow excludes the normalization collection.
@@ -228,8 +228,10 @@ This includes parsed metadata, names, positions, colors, numerical values, analy
 Different results are bugs to investigate and fix, not features of the implementations.
 Small loudness and normalization differences are allowed within the existing documented test tolerances.
 These allowances do not extend to parsed metadata or the bit-exact true peak contract.
-The C++ implementation is a reference,
-not an oracle that overrides the file format or independently verified expectations.
+The two applications are equal, and neither implementation is a reference for the other.
+The file format and independently verified expectations decide what is correct.
+When the applications differ, fix the worse side, and never make one worse merely to match the other.
+When the better behavior is a matter of preference, ask before choosing.
 
 Use shared, independent expectations and cross-implementation tests where possible.
 Do not add implementation-specific expected values or widen tolerances merely to make divergent results pass.

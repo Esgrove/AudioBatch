@@ -7,13 +7,14 @@ Both applications provide a GUI with waveform and spectrogram previews, artwork,
 
 ## Projects
 
-- [`cpp/`](cpp/README.md): the C++23 and JUCE reference application, `AudioBatch` and `audiobatch`.
+- [`cpp/`](cpp/README.md): the C++23 and JUCE application, `AudioBatch` and `audiobatch`.
   Hosts VST3 effects and, on macOS, Audio Units.
 - [`rust/`](rust/README.md): the Rust application, `AudioBatchRs` and `audiobatch-rs`, built on gpui-kit.
   Hosts VST3 and CLAP effects on both supported platforms.
 - [`image-control-plugin/`](image-control-plugin/README.md): ImageControl, an independent four-band stereo imaging effect.
   Available as VST3 and, on macOS, an Audio Unit.
 
+The two applications are equal implementations of the same behavior, and neither is a reference for the other.
 The applications share `AudioBatch/analysis.db`, but keep settings, logs, plugin lists, chains, and presets separate.
 Their CLIs use matching analysis and normalization options and table, CSV, and JSON output.
 
