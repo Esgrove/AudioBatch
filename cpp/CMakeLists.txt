@@ -18,7 +18,7 @@ endif()
 
 project(
     "AudioBatch"
-    VERSION 2.0.0
+    VERSION 2.0.1
     DESCRIPTION "Batch analyze and process audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX C

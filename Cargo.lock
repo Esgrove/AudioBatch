@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-cli"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "audiobatch-core",
@@ -637,7 +637,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64 0.23.1",
  "criterion",
@@ -671,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-gui"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-playback"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "audioadapter-buffers",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-plugins"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "audiobatch-core",
@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-test-clap-plugin"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clack-extensions",
  "clack-host",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-test-plugin"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "vst3",
  "vst3-host",
@@ -1067,7 +1067,7 @@ dependencies = [
 
 [[package]]
 name = "build-info"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "jiff",
 ]
@@ -1351,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "clap-host"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "audiobatch-test-clap-plugin",
  "clack-extensions",
@@ -6759,7 +6759,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-host-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "async-channel",
  "crossbeam-queue",
@@ -7920,7 +7920,7 @@ dependencies = [
 
 [[package]]
 name = "serato-tags"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64 0.23.1",
  "byteorder",
@@ -8814,7 +8814,7 @@ dependencies = [
 
 [[package]]
 name = "test-fixtures"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "colored",
  "serde",
@@ -9518,7 +9518,7 @@ dependencies = [
 
 [[package]]
 name = "vst3-host"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "audiobatch-test-plugin",
