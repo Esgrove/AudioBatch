@@ -4,6 +4,7 @@
 //! GPU timestamps span encoded production passes, not uploads, presentation, or end-to-end display latency.
 
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -436,7 +437,6 @@ fn fnv1a64_hex(bytes: &[u8]) -> String {
 
 /// Formats the complete source identity outside all measured rendering stages.
 fn sha256_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
     let mut output = String::with_capacity(64);
     for byte in Sha256::digest(bytes) {
         let _ = write!(output, "{byte:02x}");

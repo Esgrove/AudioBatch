@@ -666,6 +666,7 @@ fn draw_pill(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use canvas::path::lyon_path::Event;
 
     #[test]
     fn hover_easing_matches_reference_time_constant_and_is_independent_of_frame_count() {
@@ -749,8 +750,6 @@ mod tests {
 
     #[test]
     fn response_paths_share_one_continuous_contour_and_close_only_along_the_baseline() {
-        use canvas::path::lyon_path::Event;
-
         let mut cache = ResponseCache::<iced::Renderer>::default();
         for width in [0.5, 701.5, 984.0] {
             let bounds = Rectangle::new(Point::new(28.0, 40.0), Size::new(width, 200.0));
@@ -793,8 +792,6 @@ mod tests {
 
     #[test]
     fn position_paths_keep_exact_mirrored_endpoints_and_reuse_evaluation_through_the_fade() {
-        use canvas::path::lyon_path::Event;
-
         let mut overlay = PositionOverlay::<iced::Renderer>::default();
         let bounds = Rectangle::new(Point::new(28.0, 40.0), Size::new(701.5, 200.0));
         let now = Instant::now();

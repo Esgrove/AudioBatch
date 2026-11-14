@@ -308,6 +308,7 @@ fn label_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::widget::{Space, container, mouse_area, pin, stack};
     use image_control_dsp::Imager;
 
     /// Records semantic primitives from the production generic widget without a GPU or pixels.
@@ -530,8 +531,6 @@ mod tests {
 
     /// Builds the production modal barrier beneath the same full-window dismissal shield and foreground callout.
     fn modal_meter(shared: &Arc<SharedState>, blocked: bool) -> Element<'static, (), Theme, EventRenderer> {
-        use iced::widget::{Space, container, mouse_area, pin, stack};
-
         let background: Element<'static, (), Theme, EventRenderer> =
             CorrelationMeter::new(Arc::clone(shared), 0).into();
         let mut content = stack![crate::editor::controls::interaction::modal_background(

@@ -92,15 +92,18 @@ impl HasWindowHandle for NativeParent {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "windows")]
+    use std::rc::Rc;
+
+    #[cfg(target_os = "windows")]
+    use plugin_host_core::{EditorCallbacks, NativeWindow, UiThread, WindowSize};
+
     use super::{EditorError, NativeParent};
 
     #[cfg(target_os = "windows")]
     #[test]
     #[expect(unsafe_code, reason = "the test owns the native parent through its validated borrow")]
     fn initial_size_uses_parent_dpi_and_preserves_explicit_physical_pixels() {
-        use plugin_host_core::{EditorCallbacks, NativeWindow, UiThread, WindowSize};
-        use std::rc::Rc;
-
         struct Callbacks;
         impl EditorCallbacks for Callbacks {
             fn constrain(&self, size: WindowSize) -> WindowSize {

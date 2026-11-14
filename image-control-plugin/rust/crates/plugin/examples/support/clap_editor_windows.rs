@@ -25,8 +25,9 @@ use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext,
 };
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GW_CHILD, GW_HWNDNEXT, GetClientRect, GetWindow, IsWindow, IsWindowVisible,
+    GW_CHILD, GW_HWNDNEXT, GetClassNameW, GetClientRect, GetWindow, GetWindowRect, IsWindow, IsWindowVisible,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE, SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowPos,
@@ -547,8 +548,6 @@ fn wait_for_pointer_target(ui: &UiThread, parent: &NativeWindow, child: HWND, po
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                use windows_sys::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
-                use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowRect};
                 let target = WindowFromPoint(position);
                 let mut class = [0_u16; 128];
                 let length = usize::try_from(GetClassNameW(target, class.as_mut_ptr(), 128))?;

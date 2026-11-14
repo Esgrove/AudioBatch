@@ -12,6 +12,8 @@ use serde_json::json;
 #[cfg(target_os = "windows")]
 use std::time::Duration;
 use vst3_host::{EditorWindow, UiThread};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext};
 
 /// Starts only this dedicated executable's `AppKit` application, leaving other hosts untouched.
 #[cfg(target_os = "macos")]
@@ -28,8 +30,6 @@ pub fn start_application() -> Result<()> {
 #[cfg(target_os = "windows")]
 #[expect(unsafe_code, reason = "dedicated benchmark thread owns its native DPI context")]
 pub fn start_application() -> Result<()> {
-    use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext};
-
     // SAFETY: startup precedes window creation.
     // This dedicated UI thread keeps this context until process exit.
     let previous = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
