@@ -147,8 +147,15 @@ bool stepToCompletion(sqlite3_stmt& statement)
 }
 
 /// Binds a memory block as a blob. The 64-bit call keeps sizes above 2 GiB from wrapping around.
+/// An empty block binds a zero-length blob rather than NULL,
+/// because an empty juce::MemoryBlock has a null data pointer, which SQLite would store as NULL.
+/// Callers that mean NULL bind it explicitly with bindNull.
 bool bindBlob(sqlite3_stmt& statement, const int index, const juce::MemoryBlock& data)
 {
+    if (data.isEmpty()) {
+        return sqlite3_bind_zeroblob64(&statement, index, 0) == SQLITE_OK
+            || logStatementError(statement, "bind blob", index);
+    }
     // NOLINTNEXTLINE(performance-no-int-to-ptr): SQLITE_TRANSIENT is SQLite's copy-lifetime sentinel.
     return sqlite3_bind_blob64(&statement, index, data.getData(), data.getSize(), SQLITE_TRANSIENT) == SQLITE_OK
         || logStatementError(statement, "bind blob", index);

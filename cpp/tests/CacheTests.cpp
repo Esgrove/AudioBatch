@@ -872,6 +872,35 @@ void CacheTests::runLoudnessHistoryTests()
     expect(cached.hasError() && !cached.shortTermLoudness);
     expect(cached.error == AnalysisError::unsupported);
 
+    beginTest("A successful zero-length analysis round trips with empty DC offsets stored as a blob");
+    {
+        const auto empty = directory.getChildFile("empty.wav");
+        {
+            juce::WavAudioFormat wavFormat;
+            std::unique_ptr<juce::OutputStream> stream = empty.createOutputStream();
+            expect(stream != nullptr);
+            const auto writer = wavFormat.createWriterFor(
+                stream, juce::AudioFormatWriterOptions().withSampleRate(44'100).withNumChannels(2).withBitsPerSample(16)
+            );
+            expect(writer != nullptr);
+        }
+        const auto emptyRecord = analyzeFile(empty);
+        expect(!emptyRecord.hasError(), emptyRecord.errorMessage);
+        expectEquals(emptyRecord.lengthInSamples, juce::int64 {0});
+        expect(cache.storeAnalysis(emptyRecord));
+        expect(loadCached(empty));
+        expect(!cached.hasError());
+        expect(cached.signalMetrics.dcOffsets.empty());
+
+        // Rust reads only an empty blob for zero-length DC offsets, so NULL would make the shared row a miss there.
+        const auto sql = utils::format(
+            "SELECT count(*) FROM file_analysis WHERE file_path = {} "
+            "AND typeof(dc_offsets) = 'blob' AND length(dc_offsets) = 0;",
+            empty.getFullPathName().quoted('\'')
+        );
+        expectSqlScalar(*this, databaseFile, sql.toRawUTF8(), 1);
+    }
+
     beginTest("A failure that may not repeat on the same bytes leaves the cache as it was");
     const auto cancelledFile = directory.copyFixture("sine_stereo_44100_16.wav", "cancelled.wav");
     const auto cancelled = analyzeFile(cancelledFile, [] { return true; });
