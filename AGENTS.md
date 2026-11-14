@@ -59,6 +59,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   with optional Developer ID `--sign` and `--notarize` modes, while local `build.sh` and `install.sh` remain `native`.
 - `bump-version.sh` bumps the versions of the C++ application, the Rust workspace, and the test plugin together,
   a patch by default, or `--major` or `--minor`.
+  It refreshes the root `Cargo.lock` and the application packages pinned in `rust/fuzz/Cargo.lock`.
   `--commit` commits only the version files and adds an annotated `vX.Y.Z` tag.
   ImageControl keeps its own version in `image-control-plugin/CMakeLists.txt`.
 - `fixtures/` holds the committed audio fixtures that both test suites read in place,
@@ -198,8 +199,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and Miri, RealtimeSanitizer, and a license audit for the Rust implementation.
   Its path filters cover the plugin, JUCE submodule, shared C++ style, optimization, and pluginval configuration,
   native CPU detection helper, root `common.sh`, the shared realtime runner,
-  the Python configuration, and the workflow itself, excluding Markdown-only changes.
   the `plugin-host-core` and `vst3-host` crates that its Rust host tests use,
+  the Python configuration, and the workflow itself, excluding Markdown-only changes.
 
 ## Isolated Application Storage
 

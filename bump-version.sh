@@ -10,8 +10,8 @@ USAGE="Usage: $0 [OPTIONS]
 Bump the C++ application, Rust application workspace, and shared test plugin project versions together.
 ImageControl keeps its independent versions.
 Default to a patch bump, and reset lower version components for a major or minor bump.
-Run cargo update --workspace from the repository root to refresh the workspace packages in Cargo.lock
-without upgrading external dependencies.
+Run cargo update --workspace from the repository root to refresh the workspace packages in Cargo.lock,
+and refresh the application packages in rust/fuzz/Cargo.lock, without upgrading external dependencies.
 
 OPTIONS: All options are optional
     -h | --help
@@ -24,10 +24,13 @@ OPTIONS: All options are optional
         Bump the minor version.
 
     -c | --commit
-        Stage the four version files and commit with the message \"Version X.X.X\".
+        Stage the five version files and commit with the message \"Version X.X.X\".
         Create an annotated tag vX.X.X on that commit with the same message.
         Leave unrelated staged files out of the commit.
 "
+
+# Application packages that the separate fuzz workspace pins in rust/fuzz/Cargo.lock.
+FUZZ_LOCKED_PACKAGES=(audiobatch-cli audiobatch-core serato-tags)
 
 # Handle version selection and help before checking tools or editing files.
 parse_arguments() {
@@ -113,7 +116,7 @@ PERL
 # Commit only the coordinated version files, leaving unrelated staged work alone.
 commit_version() {
     local version
-    local version_files=(cpp/CMakeLists.txt Cargo.toml Cargo.lock test-plugin/CMakeLists.txt)
+    local version_files=(cpp/CMakeLists.txt Cargo.toml Cargo.lock rust/fuzz/Cargo.lock test-plugin/CMakeLists.txt)
     version=$(perl -ne 'print $1 if /^version = "([0-9]+\.[0-9]+\.[0-9]+)"/' "$REPO_ROOT/Cargo.toml")
     git add -- "${version_files[@]}"
     git commit --only -m "Version $version" -- "${version_files[@]}"
@@ -133,7 +136,11 @@ update_versions() {
     if ! cargo update --workspace; then
         print_error_and_exit "Versions were changed, but Cargo.lock could not be refreshed. Run cargo update --workspace in the repository root."
     fi
-    print_green "Project versions and Rust lockfile updated."
+    # The fuzz crates form a separate workspace with their own lockfile that pins the application packages.
+    if ! cargo update --manifest-path rust/fuzz/Cargo.toml "${FUZZ_LOCKED_PACKAGES[@]/#/-p=}"; then
+        print_error_and_exit "Versions were changed, but rust/fuzz/Cargo.lock could not be refreshed. Run cargo update --manifest-path rust/fuzz/Cargo.toml -p audiobatch-cli -p audiobatch-core -p serato-tags in the repository root."
+    fi
+    print_green "Project versions and Rust lockfiles updated."
     if [ "$CREATE_COMMIT" = true ]; then
         commit_version
     fi
