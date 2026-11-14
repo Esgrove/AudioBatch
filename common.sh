@@ -16,7 +16,7 @@ case "$(uname -s)" in
     "Darwin")
         BASH_PLATFORM="mac"
         ;;
-    "MINGW"*)
+    "MINGW"* | "MSYS"* | "CYGWIN"*)
         BASH_PLATFORM="windows"
         ;;
     "Windows_NT"*)
