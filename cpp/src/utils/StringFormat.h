@@ -57,12 +57,6 @@ template<typename... Args>
     return juce::String::fromUTF8(result.c_str(), static_cast<int>(result.size()));
 }
 
-/// Returns the text trimmed and lowercased, for matching option values and other names case-insensitively.
-[[nodiscard]] inline juce::String normalizedToken(const juce::String& value)
-{
-    return value.trim().toLowerCase();
-}
-
 /// Quotes a CSV field when it contains a separator, a quote, or a line break, doubling any quotes inside.
 [[nodiscard]] inline juce::String escapeCsvField(const juce::String& field)
 {

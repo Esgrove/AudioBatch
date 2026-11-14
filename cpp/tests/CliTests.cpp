@@ -216,11 +216,11 @@ public:
             expect(message.contains("peak, lufs, loudness, name, path"), message);
         }
 
-        beginTest("Plugin listing options require the list command and exclude analysis options");
+        beginTest("Plugin listing options are unknown outside the list command, and analysis options inside it");
         {
-            expectError({"-g", "type"}, CliParseErrorKind::missingRequiredOption);
-            expectError({"-R"}, CliParseErrorKind::missingRequiredOption);
-            expectError({"list", "-r"}, CliParseErrorKind::conflictingOptions);
+            expectError({"-g", "type"}, CliParseErrorKind::unknownOption);
+            expectError({"-R"}, CliParseErrorKind::unknownOption);
+            expectError({"list", "-r"}, CliParseErrorKind::unknownOption);
             expectError({"list", "music"}, CliParseErrorKind::unexpectedInput);
             expectError({"list", "--bogus"}, CliParseErrorKind::unknownOption);
             expectError({"list", "-g", "size"}, CliParseErrorKind::invalidValue);
@@ -329,6 +329,45 @@ public:
             expectError({"help", "-r"}, CliParseErrorKind::unknownOption);
         }
 
+        beginTest("Help and version follow argument order, so an earlier invalid argument is reported first");
+        {
+            expect(expectCommand<HelpCommand>({"-h", "--jobs", "0"}).subcommand == CliSubcommand::none);
+            expect(expectCommand<HelpCommand>({"--force", "-h"}).subcommand == CliSubcommand::none);
+            expect(expectCommand<HelpCommand>({"-n", "--peak", "5", "-h"}).subcommand == CliSubcommand::none);
+            expect(expectCommand<HelpCommand>({"list", "-h", "--bogus"}).subcommand == CliSubcommand::list);
+            expect(expectCommand<HelpCommand>({"process", "-p", "Master", "-h"}).subcommand == CliSubcommand::process);
+            expectCommand<VersionCommand>({"-V", "--bogus"});
+            expectCommand<VersionCommand>({"-j", "2", "--version"});
+
+            expectError({"--jobs", "0", "-h"}, CliParseErrorKind::valueOutOfRange);
+            expectError({"--bogus", "-h"}, CliParseErrorKind::unknownOption);
+            expectError({"-o", "xml", "-h"}, CliParseErrorKind::invalidValue);
+            expectError({"--sort", "size", "-V"}, CliParseErrorKind::invalidValue);
+            expectError({"list", "--bogus", "-h"}, CliParseErrorKind::unknownOption);
+            expectError({"list", "-V"}, CliParseErrorKind::unknownOption);
+            expectError({"help", "-h"}, CliParseErrorKind::unknownOption);
+        }
+
+        beginTest("A bare double dash ends the options, so later arguments are paths");
+        {
+            const auto command = expectCommand<AnalyzeCommand>({"-r", "--", "-x.wav", "-h", "--", "-5"});
+            expect(command.recursive);
+            expectEquals(command.inputPaths.size(), 4);
+            if (command.inputPaths.size() == 4) {
+                expectEquals(command.inputPaths[0].getFileName(), juce::String("-x.wav"));
+                expectEquals(command.inputPaths[1].getFileName(), juce::String("-h"));
+                expectEquals(command.inputPaths[2].getFileName(), juce::String("--"));
+                expectEquals(command.inputPaths[3].getFileName(), juce::String("-5"));
+            }
+            expectError({"list", "--", "-x"}, CliParseErrorKind::unknownOption);
+        }
+
+        beginTest("Option values match case-insensitively");
+        {
+            expect(expectCommand<AnalyzeCommand>({"-o", "JSON"}).outputFormat == AudioAnalysisOutputFormat::json);
+            expect(expectCommand<CompletionCommand>({"completion", "ZSH"}).shell == CompletionShell::zsh);
+        }
+
         beginTest("Force requires normalize");
         {
             expectError({"--force"}, CliParseErrorKind::missingRequiredOption);
@@ -350,7 +389,7 @@ public:
             expect(expectCommand<AnalyzeCommand>({"--output=csv"}).outputFormat == AudioAnalysisOutputFormat::csv);
 
             expectError({"-o", "xml"}, CliParseErrorKind::invalidValue);
-            expectError({"list", "-o", "json"}, CliParseErrorKind::conflictingOptions);
+            expectError({"list", "-o", "json"}, CliParseErrorKind::unknownOption);
         }
 
         beginTest("Normalization targets are parsed and validated");
@@ -448,29 +487,34 @@ void CliTests::runDeleteOptionTests()
             juce::String("--delete can only be used with --normalize")
         );
         expectDisposer({"-n", option}, std::nullopt, true);
-        expectError({"list", option}, CliParseErrorKind::conflictingOptions);
+        expectError({"list", option}, CliParseErrorKind::unknownOption);
         expectError({"completion", "zsh", option}, CliParseErrorKind::unknownOption);
     }
     expectDisposer({"-nDF"}, std::nullopt, true);
     expectDisposer({"-n"}, std::nullopt, false);
 
     beginTest("The delete environment accepts case-insensitive boolish values");
-    for (const auto* value : {"true", "1", "yes", "on", "TRUE", "True", "YES", "Yes", "ON", "On"}) {
+    for (const auto* value : {"y", "t", "Y", "T", "true", "1", "yes", "on", "TRUE", "True", "YES", "Yes", "ON", "On"}) {
         expectDisposer({"-n"}, juce::String(value), true);
         expectEquals(
             expectError({}, CliParseErrorKind::missingRequiredOption, juce::String(value)),
             juce::String("--delete can only be used with --normalize")
         );
     }
-    for (const auto* value : {"false", "0", "no", "off", "FALSE", "False", "NO", "No", "OFF", "Off"}) {
+    for (const auto* value :
+         {"n", "f", "N", "F", "false", "0", "no", "off", "FALSE", "False", "NO", "No", "OFF", "Off"})
+    {
         expectDisposer({"-n"}, juce::String(value), false);
         expect(!expectCommand<AnalyzeCommand>({}, juce::String(value)).normalization.has_value());
     }
 
     beginTest("The delete environment rejects empty, unknown, and whitespace-padded values");
-    for (const auto* value : {"", "invalid", "2", "-1", " true", "false ", " yes ", "\tON", "off\n"}) {
+    for (const auto* value : {"", "invalid", "2", "-1", "ye", "tr", " true", "false ", " yes ", "\tON", "off\n", " y"})
+    {
         const auto message = expectError({"-n"}, CliParseErrorKind::invalidValue, juce::String(value));
-        expectEquals(message, juce::String("AUDIOBATCH_DELETE must be one of: true, 1, yes, on, false, 0, no, off"));
+        expectEquals(
+            message, juce::String("AUDIOBATCH_DELETE must be one of: y, yes, t, true, on, 1, n, no, f, false, off, 0")
+        );
     }
 
     beginTest("Either delete alias overrides disabled and invalid environment values");

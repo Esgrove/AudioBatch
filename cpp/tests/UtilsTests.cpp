@@ -480,9 +480,8 @@ void UtilsTests::runTest()
     runOutputOwnershipTests();
     runDisposalTests();
 
-    beginTest("Names match case-insensitively and CSV fields are escaped");
+    beginTest("CSV fields are escaped");
     {
-        expectEquals(utils::normalizedToken("  JSON "), juce::String("json"));
         expectEquals(utils::escapeCsvField("plain"), juce::String("plain"));
         expectEquals(utils::escapeCsvField("a,b"), juce::String(R"("a,b")"));
         expectEquals(utils::escapeCsvField(R"(say "hi")"), juce::String(R"("say ""hi""")"));

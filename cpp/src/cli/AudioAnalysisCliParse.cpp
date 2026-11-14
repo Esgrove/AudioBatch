@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace audiobatch
 {
@@ -32,6 +33,26 @@ namespace
 constexpr int MINIMUM_WORKER_LIMIT {64};
 /// Longest worker count text that is parsed, which keeps the number far from the 64-bit limit.
 constexpr int MAXIMUM_WORKER_COUNT_DIGITS {9};
+/// Lowercase AUDIOBATCH_DELETE values that enable permanent deletion, the same set clap accepts as true.
+constexpr std::array<std::string_view, 6> DELETE_TRUE_VALUES {"y", "yes", "t", "true", "on", "1"};
+/// Lowercase AUDIOBATCH_DELETE values that keep trash disposal, the same set clap accepts as false.
+constexpr std::array<std::string_view, 6> DELETE_FALSE_VALUES {"n", "no", "f", "false", "off", "0"};
+
+/// The command line split at the first bare "--", which ends the options like it does for clap.
+struct SeparatedArguments {
+    /// The arguments before the separator, which may hold options.
+    juce::ArgumentList options;
+    /// The arguments after the separator, taken literally as positional arguments even when they start with "-".
+    juce::StringArray literals;
+};
+
+/// Where the first help or version flag of a command line is, and which of the two it is.
+struct HelpOrVersionFlag {
+    /// Index of the flag in the expanded arguments before any "--".
+    int index {0};
+    /// True for --version or -V, false for --help or -h.
+    bool version {false};
+};
 
 /// Returns a rejected command line, ready to return from a function whose result is a std::expected.
 std::unexpected<CliParseError> parseError(const CliParseErrorKind kind, juce::String message)
@@ -62,13 +83,13 @@ std::optional<juce::String> takeOptionValue(juce::ArgumentList& arguments, const
     return arguments.removeValueForOption(pattern);
 }
 
-/// Returns the value whose name matches the text, ignoring case and surrounding space,
+/// Returns the value whose name matches the text, ignoring case but not surrounding space,
 /// or nothing for an unknown name.
 template<typename Enum, std::size_t count>
     requires std::is_enum_v<Enum>
 std::optional<Enum> parseName(const std::array<OptionName<Enum>, count>& names, const juce::String& text)
 {
-    const auto token = utils::normalizedToken(text);
+    const auto token = text.toLowerCase();
     const auto match
         = std::ranges::find_if(names, [&token](const OptionName<Enum>& entry) { return token == entry.name; });
 
@@ -197,6 +218,25 @@ juce::ArgumentList expandCombinedShortOptions(const juce::ArgumentList& argument
     return expanded;
 }
 
+/// Splits the arguments at the first bare "--".
+/// Combined short options are expanded only before it, so a literal such as "-rf.wav" stays one path.
+SeparatedArguments separateArguments(const juce::ArgumentList& commandLine)
+{
+    SeparatedArguments separated {.options = {commandLine.executableName, juce::StringArray {}}, .literals = {}};
+    bool literal = false;
+    for (const auto& argument : commandLine.arguments) {
+        if (literal) {
+            separated.literals.add(argument.text);
+        } else if (argument.text == "--") {
+            literal = true;
+        } else {
+            separated.options.arguments.add(argument);
+        }
+    }
+    separated.options = expandCombinedShortOptions(separated.options);
+    return separated;
+}
+
 /// Reads AUDIOBATCH_DELETE without treating an empty value as an absent variable.
 std::optional<juce::String> readDeleteEnvironmentValue()
 {
@@ -211,7 +251,8 @@ std::optional<juce::String> readDeleteEnvironmentValue()
 #endif
 }
 
-/// Resolves --delete ahead of AUDIOBATCH_DELETE, accepting clap's case-insensitive boolish values.
+/// Resolves --delete ahead of AUDIOBATCH_DELETE, accepting the same case-insensitive boolish values as clap:
+/// y, yes, t, true, on, and 1, or n, no, f, false, off, and 0, without surrounding whitespace.
 /// An absent variable keeps trash disposal, while an empty or unrecognized value is rejected.
 std::expected<bool, CliParseError> parseDeleteOriginals(
     const bool explicitDelete,
@@ -226,17 +267,18 @@ std::expected<bool, CliParseError> parseDeleteOriginals(
         return false;
     }
 
-    const auto value = environmentValue->toLowerCase();
-    if (value == "false" || value == "0" || value == "no" || value == "off") {
+    const auto value = environmentValue->toLowerCase().toStdString();
+    if (std::ranges::contains(DELETE_FALSE_VALUES, value)) {
         return false;
     }
 
-    if (value == "true" || value == "1" || value == "yes" || value == "on") {
+    if (std::ranges::contains(DELETE_TRUE_VALUES, value)) {
         return true;
     }
 
     return parseError(
-        CliParseErrorKind::invalidValue, "AUDIOBATCH_DELETE must be one of: true, 1, yes, on, false, 0, no, off"
+        CliParseErrorKind::invalidValue,
+        "AUDIOBATCH_DELETE must be one of: y, yes, t, true, on, 1, n, no, f, false, off, 0"
     );
 }
 
@@ -385,7 +427,7 @@ std::expected<CliCommand, CliParseError> parseListPluginsCommand(juce::ArgumentL
             [&arguments](const CliOption& option) { return arguments.containsOption(option.pattern()); }
         ))
     {
-        return parseError(CliParseErrorKind::conflictingOptions, "The list command does not take analysis options");
+        return parseError(CliParseErrorKind::unknownOption, "The list command does not take analysis options");
     }
 
     if (auto remaining = rejectRemainingOptions(arguments); !remaining) {
@@ -462,8 +504,12 @@ std::expected<CliCommand, CliParseError> parseHelpCommand(const juce::ArgumentLi
     return HelpCommand {.subcommand = subcommand};
 }
 
-/// Validates the input paths left after taking every supported analysis option.
-std::expected<juce::Array<juce::File>, CliParseError> parseInputPaths(const juce::ArgumentList& arguments)
+/// Validates the input paths left after taking every supported analysis option,
+/// followed by the literal paths after a bare "--", which are never options or stray values.
+std::expected<juce::Array<juce::File>, CliParseError> parseInputPaths(
+    const juce::ArgumentList& arguments,
+    const juce::StringArray& literals
+)
 {
     juce::Array<juce::File> paths;
     for (const auto& argument : arguments.arguments) {
@@ -483,6 +529,9 @@ std::expected<juce::Array<juce::File>, CliParseError> parseInputPaths(const juce
 
         paths.add(argument.resolveAsFile());
     }
+    for (const auto& literal : literals) {
+        paths.add(juce::ArgumentList::Argument {.text = literal}.resolveAsFile());
+    }
     return paths;
 }
 
@@ -491,6 +540,7 @@ std::expected<juce::Array<juce::File>, CliParseError> parseInputPaths(const juce
 /// An optional caller-owned processing command receives the parsed settings during this call only.
 std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     juce::ArgumentList& arguments,
+    const juce::StringArray& literals,
     const std::optional<juce::String>& deleteEnvironmentValue,
     const utils::OptionalRef<ProcessCommand> processing = std::nullopt
 )
@@ -499,7 +549,7 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
         || arguments.containsOption(cli::RESCAN_OPTION.pattern()))
     {
         return parseError(
-            CliParseErrorKind::missingRequiredOption, "--group-by and --rescan can only be used with the list command"
+            CliParseErrorKind::unknownOption, "--group-by and --rescan can only be used with the list command"
         );
     }
 
@@ -557,8 +607,11 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     if (normalize) {
         auto normalization = parseNormalization(peakValue, loudnessValue);
 
+        // Target levels are validated after every argument was read, so a later help flag still wins.
         if (!normalization) {
-            return std::unexpected(normalization.error());
+            auto error = normalization.error();
+            error.deferred = true;
+            return std::unexpected(std::move(error));
         }
 
         normalization->overwriteExisting = force;
@@ -566,7 +619,7 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
         command.normalization = std::move(*normalization);
     }
 
-    auto paths = parseInputPaths(arguments);
+    auto paths = parseInputPaths(arguments, literals);
     if (!paths) {
         return std::unexpected(paths.error());
     }
@@ -676,6 +729,129 @@ juce::StringArray buildSubcommandUsage(const juce::String& executableName, const
 
     return lines;
 }
+/// Returns the arguments of the literal paths after "--", which are never options.
+juce::Array<juce::ArgumentList::Argument> literalArguments(const juce::StringArray& literals)
+{
+    juce::Array<juce::ArgumentList::Argument> arguments;
+    for (const auto& literal : literals) {
+        arguments.add({.text = literal});
+    }
+    return arguments;
+}
+
+/// Returns the first help or version flag, skipping the value of an option that takes one.
+/// Version is only a flag of the analysis run, since subcommands do not take it.
+/// The help subcommand never has a flag, since it takes only command names.
+std::optional<HelpOrVersionFlag> findHelpOrVersionFlag(
+    const juce::ArgumentList& arguments,
+    const CliSubcommand subcommand
+)
+{
+    // The help subcommand takes only command names, so a flag after it is reported as an unknown option.
+    if (subcommand == CliSubcommand::help) {
+        return std::nullopt;
+    }
+    const auto valueOptions = [subcommand] {
+        std::vector<std::reference_wrapper<const CliOption>> options;
+        if (subcommand == CliSubcommand::process) {
+            options.assign(cli::PROCESS_OPTIONS.begin(), cli::PROCESS_OPTIONS.end());
+        } else if (subcommand == CliSubcommand::list) {
+            options.assign(cli::LIST_OPTIONS.begin(), cli::LIST_OPTIONS.end());
+        } else if (subcommand == CliSubcommand::none) {
+            options.assign(cli::ANALYSIS_OPTIONS.begin(), cli::ANALYSIS_OPTIONS.end());
+        }
+        return options;
+    }();
+    const auto takesValue = [&valueOptions](const juce::ArgumentList::Argument& argument) {
+        return std::ranges::any_of(valueOptions, [&argument](const CliOption& option) {
+            return option.takesValue() && argument == option.pattern() && !argument.text.containsChar('=');
+        });
+    };
+
+    const auto first = subcommand == CliSubcommand::none ? 0 : 1;
+    for (int index = first; index < arguments.size(); ++index) {
+        const auto& argument = arguments[index];
+        if (argument == cli::HELP_OPTION.pattern()) {
+            return HelpOrVersionFlag {.index = index, .version = false};
+        }
+        if (subcommand == CliSubcommand::none && argument == cli::VERSION_OPTION.pattern()) {
+            return HelpOrVersionFlag {.index = index, .version = true};
+        }
+        if (takesValue(argument) && index + 1 < arguments.size()) {
+            ++index;
+        }
+    }
+    return std::nullopt;
+}
+
+/// Returns true for an error that relates several options or needs every argument,
+/// which a help or version flag later on the command line still overrides, as it does in clap.
+bool isDeferredError(const CliParseError& error)
+{
+    if (error.deferred) {
+        return true;
+    }
+    switch (error.kind) {
+        case CliParseErrorKind::missingRequiredOption:
+        case CliParseErrorKind::conflictingOptions:
+        case CliParseErrorKind::missingArgument:
+            return true;
+        case CliParseErrorKind::unknownOption:
+        case CliParseErrorKind::invalidValue:
+        case CliParseErrorKind::valueOutOfRange:
+        case CliParseErrorKind::unexpectedNumber:
+        case CliParseErrorKind::unexpectedInput:
+            return false;
+    }
+    return false;
+}
+
+/// Parses arguments already split at "--", with the subcommand found in their first argument.
+std::expected<CliCommand, CliParseError> parseSeparatedArguments(
+    juce::ArgumentList arguments,
+    const juce::StringArray& literals,
+    const CliSubcommand subcommand,
+    const std::optional<juce::String>& deleteEnvironmentValue
+)
+{
+    if (subcommand != CliSubcommand::none) {
+        arguments.arguments.remove(0);
+    }
+
+    // Root environment values are validated even for subcommands, except the help command.
+    if (subcommand == CliSubcommand::list || subcommand == CliSubcommand::completion) {
+        if (const auto deleteOriginals = parseDeleteOriginals(false, deleteEnvironmentValue); !deleteOriginals) {
+            return std::unexpected(deleteOriginals.error());
+        }
+    }
+
+    switch (subcommand) {
+        case CliSubcommand::process: {
+            ProcessCommand processing;
+            const auto preset = takeOptionValue(arguments, cli::PRESET_OPTION);
+            if (!preset.has_value() || preset->trim().isEmpty()) {
+                return parseError(
+                    CliParseErrorKind::missingRequiredOption, "The process command needs --preset <preset>"
+                );
+            }
+            processing.preset = *preset;
+            return parseAnalyzeCommand(arguments, literals, deleteEnvironmentValue, processing);
+        }
+        case CliSubcommand::list:
+            arguments.arguments.addArray(literalArguments(literals));
+            return parseListPluginsCommand(arguments);
+        case CliSubcommand::completion:
+            arguments.arguments.addArray(literalArguments(literals));
+            return parseCompletionCommand(arguments);
+        case CliSubcommand::help:
+            arguments.arguments.addArray(literalArguments(literals));
+            return parseHelpCommand(arguments);
+        case CliSubcommand::none:
+            break;
+    }
+
+    return parseAnalyzeCommand(arguments, literals, deleteEnvironmentValue);
+}
 }  // namespace
 
 /// Returns the usage line of an analysis run or of a subcommand, which an argument error prints with a hint.
@@ -764,9 +940,8 @@ juce::ArgumentList cli::expandShortOptions(const juce::ArgumentList& arguments)
     return expandCombinedShortOptions(arguments);
 }
 
-/// Parses command-line arguments into a validated analysis, plugin listing, completion, or help command,
+/// Parses command-line arguments into a validated analysis, plugin listing, completion, help, or version command,
 /// or returns why the arguments were rejected, with the message to show the user.
-/// The help and version flags are handled by the caller before parsing.
 std::expected<CliCommand, CliParseError> cli::parseArguments(const juce::ArgumentList& commandLine)
 {
     return parseArguments(commandLine, readDeleteEnvironmentValue());
@@ -779,42 +954,25 @@ std::expected<CliCommand, CliParseError> cli::parseArguments(
     const std::optional<juce::String>& deleteEnvironmentValue
 )
 {
-    auto arguments = expandCombinedShortOptions(commandLine);
-    const auto subcommand = findSubcommand(arguments);
+    const auto separated = separateArguments(commandLine);
+    const auto subcommand = findSubcommand(separated.options);
 
-    if (subcommand != CliSubcommand::none) {
-        arguments.arguments.remove(0);
-    }
-
-    // Root environment values are validated even for subcommands, except the help command.
-    if (subcommand == CliSubcommand::list || subcommand == CliSubcommand::completion) {
-        if (const auto deleteOriginals = parseDeleteOriginals(false, deleteEnvironmentValue); !deleteOriginals) {
-            return std::unexpected(deleteOriginals.error());
+    // Help and version are handled in argument order, the way clap handles them:
+    // an error in an argument before the flag wins, while later arguments are not checked.
+    // Rules that relate several options, such as --force needing --normalize, are checked only after the flags.
+    if (const auto flag = findHelpOrVersionFlag(separated.options, subcommand); flag.has_value()) {
+        auto prefix = separated.options;
+        prefix.arguments.removeRange(flag->index, prefix.arguments.size() - flag->index);
+        const auto parsedPrefix = parseSeparatedArguments(prefix, {}, subcommand, deleteEnvironmentValue);
+        if (!parsedPrefix && !isDeferredError(parsedPrefix.error())) {
+            return parsedPrefix;
         }
-    }
-
-    switch (subcommand) {
-        case CliSubcommand::process: {
-            ProcessCommand processing;
-            const auto preset = takeOptionValue(arguments, PRESET_OPTION);
-            if (!preset.has_value() || preset->trim().isEmpty()) {
-                return parseError(
-                    CliParseErrorKind::missingRequiredOption, "The process command needs --preset <preset>"
-                );
-            }
-            processing.preset = *preset;
-            return parseAnalyzeCommand(arguments, deleteEnvironmentValue, processing);
+        if (flag->version) {
+            return VersionCommand {};
         }
-        case CliSubcommand::list:
-            return parseListPluginsCommand(arguments);
-        case CliSubcommand::completion:
-            return parseCompletionCommand(arguments);
-        case CliSubcommand::help:
-            return parseHelpCommand(arguments);
-        case CliSubcommand::none:
-            break;
+        return HelpCommand {.subcommand = subcommand};
     }
 
-    return parseAnalyzeCommand(arguments, deleteEnvironmentValue);
+    return parseSeparatedArguments(separated.options, separated.literals, subcommand, deleteEnvironmentValue);
 }
 }  // namespace audiobatch

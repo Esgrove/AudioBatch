@@ -114,12 +114,13 @@ class CliIntegration(unittest.TestCase):
         expected: int = 0,
         cwd: Path | None = None,
         data_root: str | None = None,
+        delete: str = "0",
     ) -> subprocess.CompletedProcess[str]:
         """Run a bounded child with isolated storage and capture both streams separately."""
         environment = os.environ.copy()
         environment.update(
             AUDIOBATCH_DATA_ROOT=str(self.storage) if data_root is None else data_root,
-            AUDIOBATCH_DELETE="0",
+            AUDIOBATCH_DELETE=delete,
             NO_COLOR="1",
             CLICOLOR="0",
             CLICOLOR_FORCE="0",
@@ -474,6 +475,44 @@ class CliIntegration(unittest.TestCase):
         invalid_target = self.invoke("--peak", "-1", expected=1)
         assert invalid_target.stdout == ""
         assert "--normalize" in invalid_target.stderr
+
+    def test_help_and_version_follow_argument_order(self) -> None:
+        """An invalid argument before help or version is reported, while later arguments are not checked."""
+        for arguments in (["-h", "--jobs", "0"], ["--force", "-h"], ["list", "-h", "--bogus"], ["-V", "--bogus"]):
+            with self.subTest(arguments=arguments):
+                result = self.invoke(*arguments)
+                assert result.stdout.strip()
+                assert result.stderr == ""
+        assert not self.storage.exists(), "Help and version must not initialize cache or logging"
+        for arguments in (["--jobs", "0", "-h"], ["--bogus", "-h"], ["-o", "xml", "-h"], ["list", "-V"]):
+            with self.subTest(arguments=arguments):
+                result = self.invoke(*arguments, expected=1)
+                assert result.stdout == ""
+
+    def test_option_values_and_double_dash(self) -> None:
+        """Option values match case-insensitively, and a bare double dash makes later arguments paths."""
+        completion = self.invoke("completion", "ZSH")
+        assert completion.stdout.strip()
+        missing = self.invoke("--", "-x.wav", expected=2)
+        assert "-x.wav" in missing.stderr
+        rejected = self.invoke("list", "--", "-x", expected=1)
+        assert rejected.stdout == ""
+
+    def test_delete_environment_accepts_the_same_boolish_values(self) -> None:
+        """Both CLIs accept the same AUDIOBATCH_DELETE values, case-insensitively, and reject the rest."""
+        for value in ("y", "T", "yes", "On", "1"):
+            with self.subTest(value=value):
+                result = self.invoke("--jobs", "1", delete=value, expected=1)
+                assert "--delete can only be used with --normalize" in result.stderr
+        for value in ("n", "F", "no", "Off", "0"):
+            with self.subTest(value=value):
+                result = self.invoke("--force", delete=value, expected=1)
+                assert "--force can only be used with --normalize" in result.stderr
+        for value in ("maybe", "ye", "2"):
+            with self.subTest(value=value):
+                result = self.invoke("--normalize", delete=value, expected=1)
+                assert result.stdout == ""
+                assert "delete" in result.stderr.lower()
 
     def test_invalid_storage_root_fails_closed(self) -> None:
         """An invalid explicit root must not send any writes to normal application storage."""
