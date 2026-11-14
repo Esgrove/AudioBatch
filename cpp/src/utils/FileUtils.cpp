@@ -39,6 +39,8 @@ namespace
 {
 /// Highest number tried when a hidden backup or recovery name is already occupied.
 constexpr int MAXIMUM_BACKUP_INDEX {1000};
+/// How long the background thread waits to reap the `open -R` process that reveals files in Finder.
+[[maybe_unused]] constexpr int REVEAL_PROCESS_TIMEOUT_MS {10'000};
 #if !JUCE_WINDOWS
 /// Converts POSIX seconds to the high resolution timestamp used for identity checks.
 constexpr std::int64_t NANOSECONDS_PER_SECOND {1'000'000'000};
@@ -436,6 +438,38 @@ std::unexpected<juce::String> rollbackPublishedOutput(
     }
     return std::unexpected(juce::String("Could not move the original audio file to the system trash"));
 }
+
+/// Shows the files of one folder selected in the platform file manager.
+/// Files that no longer exist are left out, and when none exists the folder opens instead.
+void revealFolderFiles(const juce::File& folder, const juce::Array<juce::File>& files)
+{
+    juce::Array<juce::File> existing;
+    for (const auto& file : files) {
+        if (file.exists()) {
+            existing.add(file);
+        }
+    }
+    if (existing.isEmpty()) {
+        if (folder.isDirectory()) {
+            folder.revealToUser();
+        }
+        return;
+    }
+#if JUCE_MAC
+    // Finder selects every file of the folder in one window through `open -R`.
+    // The process is reaped on a background thread, so it does not linger as a zombie.
+    juce::StringArray arguments {"/usr/bin/open", "-R"};
+    for (const auto& file : existing) {
+        arguments.add(file.getFullPathName());
+    }
+    if (const auto process = std::make_shared<juce::ChildProcess>(); process->start(arguments, 0)) {
+        juce::Thread::launch([process] { process->waitForProcessToFinish(REVEAL_PROCESS_TIMEOUT_MS); });
+        return;
+    }
+#endif
+    // Explorer selects only one file per window.
+    existing.getFirst().revealToUser();
+}
 }  // namespace
 
 /// Captures the absolute path and current file stats.
@@ -613,44 +647,6 @@ FolderGroups groupByParentFolder(const juce::Array<juce::File>& files, const int
     result.skippedFolders = skipped.size();
     return result;
 }
-
-namespace
-{
-/// How long the background thread waits to reap the `open -R` process that reveals files in Finder.
-[[maybe_unused]] constexpr int REVEAL_PROCESS_TIMEOUT_MS {10'000};
-
-/// Shows the files of one folder selected in the platform file manager.
-/// Files that no longer exist are left out, and when none exists the folder opens instead.
-void revealFolderFiles(const juce::File& folder, const juce::Array<juce::File>& files)
-{
-    juce::Array<juce::File> existing;
-    for (const auto& file : files) {
-        if (file.exists()) {
-            existing.add(file);
-        }
-    }
-    if (existing.isEmpty()) {
-        if (folder.isDirectory()) {
-            folder.revealToUser();
-        }
-        return;
-    }
-#if JUCE_MAC
-    // Finder selects every file of the folder in one window through `open -R`.
-    // The process is reaped on a background thread, so it does not linger as a zombie.
-    juce::StringArray arguments {"/usr/bin/open", "-R"};
-    for (const auto& file : existing) {
-        arguments.add(file.getFullPathName());
-    }
-    if (const auto process = std::make_shared<juce::ChildProcess>(); process->start(arguments, 0)) {
-        juce::Thread::launch([process] { process->waitForProcessToFinish(REVEAL_PROCESS_TIMEOUT_MS); });
-        return;
-    }
-#endif
-    // Explorer selects only one file per window.
-    existing.getFirst().revealToUser();
-}
-}  // namespace
 
 /// Reveals the files in the platform file manager, one window per parent folder, up to maximumRevealFolders.
 /// Finder selects every file of a folder in its window, Explorer only the first of them.

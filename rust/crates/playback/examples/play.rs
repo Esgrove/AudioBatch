@@ -41,8 +41,9 @@ fn main() -> Result<()> {
         println!("position {:.2} s", player.position_seconds());
     }
     if let Some(duration) = player.duration_seconds() {
-        player.seek(duration / 2.0);
-        println!("Seeked to {:.2} s", duration / 2.0);
+        let middle = duration * 0.5;
+        player.seek(middle);
+        println!("Seeked to {middle:.2} s");
         sleep(Duration::from_millis(500));
         println!("position {:.2} s", player.position_seconds());
     }

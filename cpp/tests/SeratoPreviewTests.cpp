@@ -198,7 +198,7 @@ void SeratoPreviewTests::testCueArrows()
         expectWithinAbsoluteError(cue.top, static_cast<float>(plot.getY()), 0.001f);
         expectWithinAbsoluteError(cue.bottom, static_cast<float>(plot.getBottom()), 0.001f);
         expectWithinAbsoluteError(cue.height, layout::waveform::CUE_ARROW_HEIGHT, 0.001f);
-        expectWithinAbsoluteError(cue.halfWidth, layout::waveform::CUE_ARROW_WIDTH / 2.0f, 0.001f);
+        expectWithinAbsoluteError(cue.halfWidth, layout::waveform::CUE_ARROW_WIDTH * 0.5f, 0.001f);
         // The arrows stay near the edges, so they never cover the middle of the waveform.
         expect(cue.height <= (cue.bottom - cue.top) / 4.0f);
     }
