@@ -25,9 +25,10 @@ pub enum SortMode {
 impl FromStr for SortMode {
     type Err = String;
 
-    /// Parses a sort mode name, accepting "loudness" as an alias for "lufs".
+    /// Parses a sort mode name case-insensitively, accepting "loudness" as an alias for "lufs".
+    /// Surrounding whitespace is not trimmed, matching every other option value.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
+        match value.to_ascii_lowercase().as_str() {
             "peak" => Ok(Self::Peak),
             "lufs" | "loudness" => Ok(Self::Loudness),
             "name" => Ok(Self::Name),
@@ -250,5 +251,6 @@ mod test_sort_records {
         assert_eq!("loudness".parse::<SortMode>(), Ok(SortMode::Loudness));
         assert_eq!("path".parse::<SortMode>(), Ok(SortMode::Path));
         assert!("size".parse::<SortMode>().is_err());
+        assert!(" peak".parse::<SortMode>().is_err());
     }
 }

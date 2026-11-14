@@ -124,11 +124,14 @@ struct CompletionCommand {
     bool verbose {false};
 };
 
-/// A usage text request parsed from the command line, selected by the help subcommand.
+/// A usage text request parsed from the command line, selected by the help subcommand or the help flag.
 struct HelpCommand {
     /// The command to describe, or none for the usage text of the analysis run.
     CliSubcommand subcommand {CliSubcommand::none};
 };
+
+/// A version line request parsed from the command line, selected by the version flag.
+struct VersionCommand {};
 
 /// A rejected command line.
 struct CliParseError {
@@ -136,10 +139,13 @@ struct CliParseError {
     CliParseErrorKind kind {};
     /// The explanation shown to the user.
     juce::String message;
+    /// True for an error checked after every argument was read, which a later help or version flag overrides.
+    bool deferred {false};
 };
 
 /// The command a CLI invocation runs.
-using CliCommand = std::variant<AnalyzeCommand, ProcessCommand, ListPluginsCommand, CompletionCommand, HelpCommand>;
+using CliCommand
+    = std::variant<AnalyzeCommand, ProcessCommand, ListPluginsCommand, CompletionCommand, HelpCommand, VersionCommand>;
 
 namespace cli
 {

@@ -16,7 +16,7 @@ fn run(delete: Option<&str>, arguments: &[&str]) -> Output {
 
 #[test]
 fn enabled_environment_requires_normalization() {
-    for value in ["true", "1", "yes", "on"] {
+    for value in ["y", "t", "Y", "true", "1", "yes", "on"] {
         let output = run(Some(value), &["--jobs", "1"]);
         let error = String::from_utf8(output.stderr).expect("UTF-8 stderr");
         assert_eq!(output.status.code(), Some(1), "{value}: {error}");
@@ -26,7 +26,7 @@ fn enabled_environment_requires_normalization() {
 
 #[test]
 fn disabled_environment_leaves_other_validation_unchanged() {
-    for value in ["false", "0", "no", "off"] {
+    for value in ["n", "f", "N", "false", "0", "no", "off"] {
         let output = run(Some(value), &["--force"]);
         let error = String::from_utf8(output.stderr).expect("UTF-8 stderr");
         assert_eq!(output.status.code(), Some(1), "{value}: {error}");

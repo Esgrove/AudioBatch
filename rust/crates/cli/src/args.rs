@@ -63,7 +63,7 @@ pub enum CliCommand {
     #[command(name = "completion")]
     Completion {
         /// Shell to generate completion for
-        #[arg(value_enum)]
+        #[arg(value_enum, ignore_case = true)]
         shell: Shell,
 
         /// Install completion script to the shell's completion directory

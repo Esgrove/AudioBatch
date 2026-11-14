@@ -105,31 +105,22 @@ int runCliMain(const std::span<char*> argv)
         return runPluginScanWorker(executableName, commandLine);
     }
 
-    // Help and version only print to the console.
-    // They are checked before parsing, so they win over any other argument, even an invalid one,
-    // and return before the logger is created, so they never touch the log file.
-    // JUCE matches a short option by its letter anywhere in an argument,
-    // so combined short options are expanded first to keep the value in "-spath" from reading as -h.
-    const auto expanded = cli::expandShortOptions(arguments);
-
-    if (expanded.containsOption("--version|-V")) {
-        fmt::print("{}\n", utils::versionLine(executableName));
-        return 0;
-    }
-
     // A subcommand has its own usage text, so "list --help" describes the options of the listing.
     const auto subcommand = cli::findSubcommand(arguments);
 
-    if (expanded.containsOption("--help|-h")) {
-        fmt::print("{}\n", cli::buildUsage(executableName, subcommand));
+    // The parser handles help and version in argument order, so an invalid argument before them is reported.
+    // Help, version, and completion only print or write one file, so they return without a log file.
+    const auto command = cli::parseArguments(arguments);
+    if (command.has_value() && std::holds_alternative<VersionCommand>(*command)) {
+        fmt::print("{}\n", utils::versionLine(executableName));
+        return 0;
+    }
+    if (command.has_value() && std::holds_alternative<HelpCommand>(*command)) {
+        fmt::print("{}\n", cli::buildUsage(executableName, std::get<HelpCommand>(*command).subcommand));
         return 0;
     }
 
-    const auto command = cli::parseArguments(arguments);
-
-    // The completion script only prints or writes one file, so like help and version it leaves no log file.
-    const bool writesLog = !command.has_value()
-        || !(std::holds_alternative<CompletionCommand>(*command) || std::holds_alternative<HelpCommand>(*command));
+    const bool writesLog = !command.has_value() || !std::holds_alternative<CompletionCommand>(*command);
     const auto logger = writesLog ? utils::createDefaultLogger(executableName) : nullptr;
     juce::Logger::setCurrentLogger(logger.get());
     utils::installCrashLogging();
@@ -158,6 +149,10 @@ int runCliMain(const std::span<char*> argv)
                 },
                 [&executableName](const HelpCommand& help) {
                     fmt::print("{}\n", cli::buildUsage(executableName, help.subcommand));
+                    return 0;
+                },
+                [&executableName](const VersionCommand&) {
+                    fmt::print("{}\n", utils::versionLine(executableName));
                     return 0;
                 },
                 [](const ProcessCommand& processing) { return cli::runProcess(processing, installInterruptHandler()); },
