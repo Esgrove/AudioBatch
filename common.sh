@@ -293,6 +293,9 @@ install_shell_completions() {
 load_env_local() {
     local file="$REPO_ROOT/.env.local" line key value
     [ -f "$file" ] || return 0
+    # Child scripts inherit the loaded variables and the marker, so the file is read and reported only once.
+    [ -z "${AUDIOBATCH_ENV_LOCAL_LOADED:-}" ] || return 0
+    export AUDIOBATCH_ENV_LOCAL_LOADED=1
     print_green "Found $file, using its values for variables not set in the environment" >&2
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line#"${line%%[![:space:]]*}"}"
