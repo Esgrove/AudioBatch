@@ -226,7 +226,6 @@ write_distribution_xml() {
     <title>ImageControl $version</title>
     <organization>com.esgrove</organization>
     <options customize="always" require-scripts="$require_scripts" hostArchitectures="arm64" rootVolumeOnly="true"/>
-    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
     <installation-check script="installation_check()"/>
     <script>
         function installation_check() {

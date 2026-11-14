@@ -143,7 +143,6 @@ write_distribution_xml() {
     <title>AudioBatchRs $version</title>
     <organization>com.esgrove</organization>
     <options customize="always" require-scripts="false" hostArchitectures="arm64" rootVolumeOnly="true"/>
-    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
     <installation-check script="installation_check()"/>
     <script>
         function installation_check() {
