@@ -24,6 +24,25 @@ image_control_resolve_target_directory() {
     export CARGO_TARGET_DIR="$directory"
 }
 
+# Writes the third-party notices of the Rust ImageControl plugin to the given file.
+# The second argument is the Audio Unit wrapper's CMake build directory on macOS,
+# whose fetched CLAP SDK, AudioUnitSDK, and clap-wrapper sources supply their license files.
+write_image_control_rs_third_party_notices() {
+    local output="$1" au_build="${2:-}"
+    start_third_party_notices "$output" "ImageControl RS"
+    append_rust_crate_notices "$output" "$REPO/rust/crates/plugin/Cargo.toml"
+    if [ -n "$au_build" ]; then
+        local name title license
+        for name in clap:"CLAP SDK (MIT)" audio_unit_sdk:"AudioUnitSDK (Apache-2.0)" clap_wrapper:"clap-wrapper (MIT)"; do
+            title="${name#*:}"
+            license=$(find "$au_build/_deps/image_control_${name%%:*}-src" -maxdepth 1 -name 'LICENSE*' | head -n 1)
+            [ -n "$license" ] || print_error_and_exit "License of $title not found in $au_build/_deps"
+            append_third_party_notice "$output" "$title" "$license"
+        done
+    fi
+    append_roboto_font_notices "$output"
+}
+
 # Checks every format before testing or staging, including the single-file CLAP delivered on Windows.
 image_control_check_bundles() {
     local vst3="$1" clap="$2" audio_unit="${3:-}"

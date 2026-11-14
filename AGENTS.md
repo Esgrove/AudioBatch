@@ -57,6 +57,9 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   into `dist/macos/` through `cpp/package-macos.sh`, `rust/package-macos.sh`, and `image-control-plugin/package-macos.sh`.
   Each installer exposes customizable App/CLI or VST3/Audio Unit choices,
   with optional Developer ID `--sign` and `--notarize` modes, while local `build.sh` and `install.sh` remain `native`.
+  Every app, CLI, and plugin bundle gets a generated `THIRD-PARTY-NOTICES.txt` from the notices helpers in `common.sh`.
+  The Rust notices need [cargo-about](https://github.com/EmbarkStudios/cargo-about) with the `cli` feature and jq,
+  configured by the root `about.toml`.
 - `bump-version.sh` bumps the versions of the C++ application, the Rust workspace, and the test plugin together,
   a patch by default, or `--major` or `--minor`.
   It refreshes the root `Cargo.lock` and the application packages pinned in `rust/fuzz/Cargo.lock`.

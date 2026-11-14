@@ -335,12 +335,15 @@ package_plugin_macos() {
     local resources_dir="$work_dir/resources"
     mkdir -p "$pkgs_dir" "$resources_dir"
     cp "$REPO_ROOT/LICENSE" "$resources_dir/LICENSE.txt"
+    local notices="$work_dir/$THIRD_PARTY_NOTICES_FILE"
+    write_image_control_third_party_notices "$notices"
 
     print_magenta "Building component packages for ImageControl $version..."
     if [ "$INCLUDE_VST3" = true ]; then
         local vst3_root="$work_dir/vst3-root"
         mkdir -p "$vst3_root/Library/Audio/Plug-Ins/VST3"
         cp -R "$vst3_source" "$vst3_root/Library/Audio/Plug-Ins/VST3/ImageControl.vst3"
+        copy_third_party_notices_into_bundle "$notices" "$vst3_root/Library/Audio/Plug-Ins/VST3/ImageControl.vst3"
         sign_mac_plugin_bundle "$vst3_root/Library/Audio/Plug-Ins/VST3/ImageControl.vst3"
         build_mac_bundle_component_pkg \
             "$vst3_root" \
@@ -354,6 +357,7 @@ package_plugin_macos() {
         local au_scripts="$work_dir/au-scripts"
         mkdir -p "$au_root/Library/Audio/Plug-Ins/Components" "$au_scripts"
         cp -R "$au_source" "$au_root/Library/Audio/Plug-Ins/Components/ImageControl.component"
+        copy_third_party_notices_into_bundle "$notices" "$au_root/Library/Audio/Plug-Ins/Components/ImageControl.component"
         sign_mac_plugin_bundle "$au_root/Library/Audio/Plug-Ins/Components/ImageControl.component"
         cat > "$au_scripts/postinstall" << 'EOF'
 #!/bin/bash

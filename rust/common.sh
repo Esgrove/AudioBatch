@@ -38,10 +38,37 @@ CLI_BUNDLE_ID="com.esgrove.audiobatch-rs.cli"
 export CLI_BINARY_NAME GUI_BINARY_NAME GUI_APP_BUNDLE GUI_BUNDLE_ID CLI_BUNDLE_ID
 
 # Copy third-party notices into a distribution's license directory, including for CLI-only builds.
+# The notices of the compiled crates need cargo-about and jq, which packaging requires up front.
+# Local builds without them warn and copy only the notice of the code adapted from ebur128.
+# The notices are generated once per script run and reused for every later destination.
 copy_third_party_licenses() {
     local destination="$1"
     mkdir -p "$destination"
     cp "$REPO/crates/core/licenses/ebur128.txt" "$destination/ebur128.txt"
+    if ! has_rust_notice_tools; then
+        print_yellow "cargo-about or jq not found, so $destination has only the ebur128 notice."
+        print_yellow "Install cargo-about with: cargo install --locked cargo-about --features cli"
+        return
+    fi
+    if [ -z "${RUST_THIRD_PARTY_NOTICES:-}" ]; then
+        RUST_THIRD_PARTY_NOTICES=$(mktemp)
+        write_rust_third_party_notices "$RUST_THIRD_PARTY_NOTICES"
+    fi
+    cp "$RUST_THIRD_PARTY_NOTICES" "$destination/$THIRD_PARTY_NOTICES_FILE"
+}
+
+# Writes the third-party notices of the Rust application and CLI to the given file.
+write_rust_third_party_notices() {
+    local output="$1"
+    print_magenta "Generating third-party notices..."
+    start_third_party_notices "$output" "AudioBatchRs"
+    append_rust_crate_notices "$output" "$REPO/crates/gui/Cargo.toml" "$REPO/crates/cli/Cargo.toml"
+    append_third_party_notice "$output" "ebur128 (MIT), adapted K-weighting and true peak code" \
+        "$REPO/crates/core/licenses/ebur128.txt"
+    # rusqlite's bundled feature compiles the SQLite amalgamation into the binaries.
+    append_third_party_statement "$output" "SQLite (public domain)" \
+        "SQLite is in the public domain. See https://sqlite.org/copyright.html."
+    append_roboto_font_notices "$output"
 }
 
 # Add the .exe suffix to an executable name on Windows

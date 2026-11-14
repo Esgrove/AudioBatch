@@ -98,6 +98,7 @@ Build-tree validation can build the repository-pinned pluginval when it is not o
 The default artifacts are `rust/target/bundled/ImageControl RS.vst3`, `ImageControl RS.clap`,
 and on macOS `ImageControl RS.component`, relative to the repository root, not this directory's ignored `target/`.
 The Windows CLAP artifact is a single file. The macOS CLAP and AU artifacts are bundles.
+With cargo-about and jq installed, `build.sh` adds `THIRD-PARTY-NOTICES.txt` to `Contents/Resources/licenses/` of each bundle.
 `CARGO_TARGET_DIR` overrides the artifact location, resolved from the invocation directory before scripts change directories.
 Explicit external target roots are allowed, with canonical path checks rejecting symlink escapes.
 Debug and Release packaging use the same bundle path, so the last build selects its contents.

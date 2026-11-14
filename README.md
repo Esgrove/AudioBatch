@@ -40,6 +40,8 @@ On macOS,
 `./package-macos.sh` builds Apple Silicon `.pkg` distribution installers in `dist/macos/` with customizable App/CLI
 and VST3/Audio Unit checkboxes, supporting `--sign` and `--notarize`.
 Distribution has a fixed `apple-m1` baseline. Local builds remain native.
+Each app, CLI, and plugin includes a generated `THIRD-PARTY-NOTICES.txt` in its `licenses/` directory.
+The Rust installers need `cargo install --locked cargo-about --features cli` and jq to generate theirs.
 `--no-build` requires unchanged artifacts from a successful distribution build, not local build outputs.
 
 ### macOS signing setup

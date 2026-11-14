@@ -671,7 +671,8 @@ Local `install.sh --notarize` covers the GUI bundle only and rejects `--cli-only
 Distributed CLIs are signed before packaging and covered by notarization of the final `.pkg`.
 `./package-macos.sh` builds a non-relocatable Apple Silicon (`apple-m1`, macOS 15+)
 installer in `../dist/macos/AudioBatch-<version>.pkg` with customizable Application
-(`/Applications`) and CLI (`/usr/local/bin` plus zsh completions) choices.
+(`/Applications`) and CLI (`/usr/local/bin`, zsh completions, and license notices) choices.
+The app bundle and CLI include the third-party notices of JUCE, its bundled libraries, and the fetched dependencies.
 
 ```shell
 codesign --verify --deep --strict --verbose=2 cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app

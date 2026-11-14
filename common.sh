@@ -708,6 +708,153 @@ finalize_mac_distribution_pkg() {
     fi
 }
 
+# The file name of the generated third-party notices in every distribution's license directory.
+THIRD_PARTY_NOTICES_FILE="THIRD-PARTY-NOTICES.txt"
+# Marks the section boundaries of the generated notices.
+THIRD_PARTY_NOTICES_RULE="================================================================================"
+export THIRD_PARTY_NOTICES_FILE THIRD_PARTY_NOTICES_RULE
+
+# Starts a notices file with the product's own license and source statement.
+# The arguments are the output file and the product name.
+start_third_party_notices() {
+    local output="$1" product="$2"
+    mkdir -p "$(dirname "$output")"
+    cat > "$output" << EOF
+Third-party software notices for $product
+
+$product is free software licensed under the GNU General Public License version 3.
+Its complete source code is available at https://github.com/Esgrove/AudioBatch.
+$product includes the following third-party software, each under its own license.
+
+EOF
+}
+
+# Appends a section heading to a notices file.
+append_third_party_notice_heading() {
+    printf '%s\n%s\n%s\n\n' "$THIRD_PARTY_NOTICES_RULE" "$2" "$THIRD_PARTY_NOTICES_RULE" >> "$1"
+}
+
+# Appends one titled section with the full text of its license files to a notices file.
+# The arguments are the output file, the section title, and one or more license files.
+append_third_party_notice() {
+    local output="$1" title="$2"
+    shift 2
+    local file
+    for file in "$@"; do
+        [ -f "$file" ] || print_error_and_exit "License file not found: $file"
+    done
+    append_third_party_notice_heading "$output" "$title"
+    for file in "$@"; do
+        cat "$file" >> "$output"
+        printf '\n\n' >> "$output"
+    done
+}
+
+# Appends one titled section with a short statement instead of a license file.
+# The arguments are the output file, the section title, and the statement.
+append_third_party_statement() {
+    append_third_party_notice_heading "$1" "$2"
+    printf '%s\n\n' "$3" >> "$1"
+}
+
+# Copies a notices file into the licenses directory of a macOS bundle, before the bundle is signed.
+# The arguments are the notices file and the .app, .vst3, .clap, or .component bundle.
+copy_third_party_notices_into_bundle() {
+    mkdir -p "$2/Contents/Resources/licenses"
+    cp "$1" "$2/Contents/Resources/licenses/"
+}
+
+# Appends the Roboto and Roboto Mono font licenses, since every application and plugin embeds both fonts.
+append_roboto_font_notices() {
+    append_third_party_notice "$1" "Roboto font (OFL-1.1)" "$REPO_ROOT/assets/Roboto-OFL.txt"
+    append_third_party_notice "$1" "Roboto Mono font (OFL-1.1)" "$REPO_ROOT/assets/RobotoMono-OFL.txt"
+}
+
+# Appends the notices of JUCE and the third-party code its modules compile into the C++ binaries.
+# The arguments are the output file and the product,
+# "audiobatch" for the application and CLI or "image-control" for the plugin.
+# The ASIO SDK is only built into the Windows application, and the AudioUnitSDK only into the macOS plugin.
+append_juce_third_party_notices() {
+    local output="$1" product="$2"
+    local modules="$REPO_ROOT/cpp/JUCE/modules"
+    local codecs="$modules/juce_audio_formats/codecs"
+    local images="$modules/juce_graphics/image_formats"
+
+    append_third_party_notice "$output" "JUCE (AGPL-3.0-only)" \
+        "$REPO_ROOT/cpp/JUCE/LICENSE.md" \
+        "$modules/juce_gui_extra/native/typescript/webview-interop/LICENSE-AGPL.md"
+    append_third_party_notice "$output" "VST3 SDK (MIT)" \
+        "$modules/juce_audio_processors_headless/format_types/VST3_SDK/LICENSE.txt"
+    if [ "$product" = "image-control" ] && [ "$BASH_PLATFORM" = "mac" ]; then
+        append_third_party_notice "$output" "AudioUnitSDK (Apache-2.0)" \
+            "$modules/juce_audio_plugin_client/AU/AudioUnitSDK/LICENSE.txt"
+    fi
+    if [ "$product" = "audiobatch" ] && [ "$BASH_PLATFORM" = "windows" ]; then
+        append_third_party_notice "$output" "Steinberg ASIO SDK" "$modules/juce_audio_devices/native/asio/LICENSE.txt"
+    fi
+    append_third_party_notice "$output" "FLAC (BSD-3-Clause)" "$codecs/flac/Flac Licence.txt"
+    append_third_party_notice "$output" "Ogg (BSD-3-Clause)" "$codecs/ogg/COPYING"
+    append_third_party_notice "$output" "Vorbis (BSD-3-Clause)" "$codecs/vorbis/COPYING"
+    append_third_party_notice "$output" "Opus (BSD-3-Clause)" "$codecs/opus/opus/COPYING"
+    append_third_party_notice "$output" "opusfile (BSD-3-Clause)" "$codecs/opus/opusfile/COPYING"
+    append_third_party_notice "$output" "libopusenc (BSD-3-Clause)" "$codecs/opus/libopusenc/COPYING"
+    append_third_party_notice "$output" "zlib (Zlib)" "$modules/juce_core/zip/zlib/LICENSE"
+    append_third_party_notice "$output" "libpng (libpng-2.0)" "$images/pnglib/LICENSE"
+    # The bundled IJG libjpeg has no separate license file, so its terms come from the LEGAL ISSUES section of its README.
+    append_third_party_notice_heading "$output" "libjpeg (IJG)"
+    awk '/^LEGAL ISSUES$/ { found = 1 } /^REFERENCES$/ { found = 0 } found' "$images/jpglib/README" >> "$output"
+    printf '\n' >> "$output"
+    append_third_party_notice "$output" "libwebp (BSD-3-Clause)" "$images/libwebp/COPYING" "$images/libwebp/PATENTS"
+    append_third_party_notice "$output" "HarfBuzz (MIT)" "$modules/juce_graphics/fonts/harfbuzz/COPYING"
+    append_third_party_notice "$output" "SheenBidi (Apache-2.0)" "$modules/juce_graphics/unicode/sheenbidi/LICENSE"
+    append_third_party_notice "$output" "lunasvg (MIT)" "$modules/juce_graphics/drawables/lunasvg/LICENSE"
+    append_third_party_notice "$output" "plutovg (MIT)" "$modules/juce_graphics/drawables/lunasvg/plutovg/LICENSE"
+}
+
+# Appends the licenses of the Rust crates compiled into the given packages, generated with cargo-about.
+# Each distinct license text appears once, followed by the crates that use it.
+# The arguments are the output file and the manifest paths of the shipped crates.
+append_rust_crate_notices() {
+    local output="$1"
+    shift
+    require_rust_notice_tools
+    local reports manifest index=0
+    reports=$(mktemp -d)
+    for manifest in "$@"; do
+        cargo about -L error generate --locked --format json \
+            --config "$REPO_ROOT/about.toml" \
+            --manifest-path "$manifest" \
+            --output-file "$reports/$index.json"
+        index=$((index + 1))
+    done
+    jq --raw-output --slurp --arg rule "$THIRD_PARTY_NOTICES_RULE" '
+        [.[].licenses[]]
+        | group_by(.id + "\u0000" + .text)
+        | map({
+            name: .[0].name,
+            id: .[0].id,
+            text: .[0].text,
+            crates: ([.[].used_by[].crate | "\(.name) \(.version)"] | unique)
+        })
+        | sort_by(.id, .crates[0])
+        | .[]
+        | "\($rule)\n\(.name) (\(.id))\nUsed by: \(.crates | join(", "))\n\($rule)\n\n\(.text | rtrimstr("\n"))\n\n"
+    ' "$reports"/*.json >> "$output"
+    rm -rf "$reports"
+}
+
+# Returns success when the tools that generate the Rust crate notices are installed.
+has_rust_notice_tools() {
+    command -v cargo-about > /dev/null && command -v jq > /dev/null
+}
+
+# Exits with installation instructions when the Rust crate notice tools are missing.
+require_rust_notice_tools() {
+    require_command cargo-about \
+        "cargo-about is required for the third-party notices. Install it with: cargo install --locked cargo-about --features cli"
+    require_command jq "jq is required for the third-party notices."
+}
+
 # Enable calling functions directly as arguments:
 # ./common.sh print_green "hello"
 # shellcheck disable=SC2128

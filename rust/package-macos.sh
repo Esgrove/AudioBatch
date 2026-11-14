@@ -195,6 +195,7 @@ package_rust_macos() {
     require_command pkgbuild
     require_command productbuild
     require_command plutil
+    require_rust_notice_tools
 
     if [ "$SIGN_PKG" = true ]; then
         require_mac_developer_signing true

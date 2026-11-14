@@ -10,7 +10,7 @@ USAGE="Usage: $0 [OPTIONS]
 Build a macOS .pkg installer for C++ AudioBatch (Apple Silicon arm64, macOS 15.0+).
 Produces AudioBatch-<version>.pkg in dist/macos/ by default, with customizable Installer choices:
   - AudioBatch Application (/Applications/AudioBatch.app)
-  - audiobatch Command-Line Tool (/usr/local/bin/audiobatch + /usr/local/share/zsh/site-functions/_audiobatch)
+  - audiobatch Command-Line Tool (/usr/local/bin/audiobatch, zsh completions, and license notices)
 
 By default, payloads are signed with CODESIGN_IDENTITY (ad-hoc '-' when unset) and an unsigned .pkg is written
 for local verification. Pass --sign or --notarize with Apple Developer credentials for distribution.
@@ -256,10 +256,14 @@ package_cpp_macos() {
         "$app_root/Applications" \
         "$cli_root/usr/local/bin" \
         "$cli_root/usr/local/share/zsh/site-functions" \
+        "$cli_root/usr/local/share/licenses/audiobatch" \
         "$pkgs_dir" \
         "$resources_dir"
 
     cp -R "$app_source" "$app_root/Applications/AudioBatch.app"
+    local notices="$work_dir/$THIRD_PARTY_NOTICES_FILE"
+    write_cpp_third_party_notices "$notices" "$BUILD_DIR"
+    copy_third_party_notices_into_bundle "$notices" "$app_root/Applications/AudioBatch.app"
     sign_mac_app_bundle "$app_root/Applications/AudioBatch.app"
 
     local staged_cli="$cli_root/usr/local/bin/audiobatch"
@@ -268,6 +272,7 @@ package_cpp_macos() {
     sign_mac_cli_binary "$staged_cli" "$CLI_BUNDLE_ID"
     "$staged_cli" completion zsh > "$cli_root/usr/local/share/zsh/site-functions/_audiobatch"
     chmod 644 "$cli_root/usr/local/share/zsh/site-functions/_audiobatch"
+    cp "$notices" "$cli_root/usr/local/share/licenses/audiobatch/"
 
     cp "$REPO_ROOT/LICENSE" "$resources_dir/LICENSE.txt"
     write_mac_installer_logo "$REPO_ROOT/assets/icon_mac.png" "$resources_dir/icon_mac.png"

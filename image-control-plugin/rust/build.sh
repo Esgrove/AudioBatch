@@ -48,6 +48,7 @@ parse_arguments() {
 build_bundles() {
     cargo run --manifest-path "$PRIMARY_MANIFEST" -p image-control-xtask -- bundle image-control-plugin-rs "${BUILD_PROFILE[@]}"
     image_control_check_bundles "$BUNDLE" "$CLAP_BUNDLE" "$AU_BUNDLE"
+    add_third_party_notices
     if [ "$BASH_PLATFORM" = mac ]; then
         require_command codesign
         local artifact
@@ -56,6 +57,31 @@ build_bundles() {
             codesign --verify --deep --strict "$artifact"
         done
     fi
+}
+
+# Copies the third-party notices into every bundle format, before macOS signing seals the bundles.
+# The Windows CLAP is a single file without a resources directory, so it carries no notices.
+# Builds without cargo-about or jq warn and leave the notices out.
+add_third_party_notices() {
+    if ! has_rust_notice_tools; then
+        print_yellow "cargo-about or jq not found, so the bundles have no third-party notices."
+        print_yellow "Install cargo-about with: cargo install --locked cargo-about --features cli"
+        return
+    fi
+    local profile=debug au_build="" notices artifact
+    if [ ${#BUILD_PROFILE[@]} -ne 0 ]; then
+        profile=release
+    fi
+    if [ "$BASH_PLATFORM" = mac ]; then
+        au_build=$(find "$CARGO_TARGET_DIR/image-control-au" -mindepth 2 -maxdepth 2 -type d -name "$profile" | head -n 1)
+    fi
+    notices="$CARGO_TARGET_DIR/bundled/$THIRD_PARTY_NOTICES_FILE"
+    write_image_control_rs_third_party_notices "$notices" "$au_build"
+    for artifact in "$BUNDLE" "$CLAP_BUNDLE" "$AU_BUNDLE"; do
+        if [ -d "$artifact/Contents" ]; then
+            copy_third_party_notices_into_bundle "$notices" "$artifact"
+        fi
+    done
 }
 
 run_tests() {

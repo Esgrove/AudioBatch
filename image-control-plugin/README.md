@@ -213,6 +213,7 @@ For distribution on macOS, `./package-macos.sh` builds `../dist/macos/ImageContr
 (`apple-m1`, macOS 15+) with interactive Installer Customize checkboxes for `ImageControl VST3`
 (`/Library/Audio/Plug-Ins/VST3`) and `ImageControl Audio Unit` (`/Library/Audio/Plug-Ins/Components`),
 plus optional `--sign` and `--notarize`.
+Both bundles include the third-party notices of JUCE and its bundled libraries in `Contents/Resources/licenses/`.
 `./build.sh --validate` validates the built VST3 with pluginval, without installing the plugin.
 `./install.sh --validate` validates the installed VST3 and, on macOS, the registered Audio Unit with auval.
 Both use pluginval from `PATH` when available.

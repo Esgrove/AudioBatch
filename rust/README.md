@@ -112,10 +112,13 @@ but leave Cargo artifacts untouched because the option only cleans the C++ CMake
 K-weighting coefficient calculations, the filter recurrence,
 and true-peak interpolation coefficient calculation include adaptations from ebur128 0.1.11.
 Its complete copyright and MIT license notice is in [`crates/core/licenses/ebur128.txt`](crates/core/licenses/ebur128.txt).
-`build.sh` copies it into `audiobatch-rs-licenses/` beside the loose binaries,
-and `install.sh` copies it into the same directory beside the installed CLI.
-macOS app bundles include it in `Contents/Resources/licenses/`, and Windows GUI installations in `licenses/`.
-Include this notice when distributing binaries built or installed directly with Cargo too.
+With [cargo-about](https://github.com/EmbarkStudios/cargo-about) and jq installed,
+`THIRD-PARTY-NOTICES.txt` adds the licenses of every compiled crate, the bundled SQLite, and the Roboto fonts.
+Install cargo-about with `cargo install --locked cargo-about --features cli`. `package-macos.sh` requires it.
+`build.sh` copies both files into `audiobatch-rs-licenses/` beside the loose binaries,
+and `install.sh` copies them into the same directory beside the installed CLI.
+macOS app bundles include them in `Contents/Resources/licenses/`, and Windows GUI installations in `licenses/`.
+Include these notices when distributing binaries built or installed directly with Cargo too.
 
 Windows GUI builds require the Visual Studio C++ Build Tools, a Windows SDK, and LLVM with `libclang.dll`.
 If LLVM is not found automatically, set `LIBCLANG_PATH` to its `bin` directory.

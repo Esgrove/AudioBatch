@@ -9,6 +9,14 @@ export REPO
 # shellcheck source=common.sh
 source "$(dirname "$REPO")/common.sh"
 
+# Writes the third-party notices of the ImageControl plugin to the given file.
+write_image_control_third_party_notices() {
+    local output="$1"
+    start_third_party_notices "$output" "ImageControl"
+    append_juce_third_party_notices "$output" image-control
+    append_roboto_font_notices "$output"
+}
+
 # Prints the CMake build directory for a build type.
 # The first argument is the build type, and the second is "true" for the Windows Ninja workspace,
 # which cannot share a directory with the default Visual Studio one.
