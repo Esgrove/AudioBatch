@@ -199,6 +199,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   Its path filters cover the plugin, JUCE submodule, shared C++ style, optimization, and pluginval configuration,
   native CPU detection helper, root `common.sh`, the shared realtime runner,
   the Python configuration, and the workflow itself, excluding Markdown-only changes.
+  the `plugin-host-core` and `vst3-host` crates that its Rust host tests use,
 
 ## Isolated Application Storage
 
