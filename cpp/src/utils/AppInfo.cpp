@@ -3,6 +3,7 @@
 
 #include "utils/AppInfo.h"
 
+#include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/version.h"
 
@@ -15,6 +16,40 @@
 
 namespace audiobatch::utils
 {
+namespace
+{
+/// Suffix of the backup that keeps an unreadable settings file instead of overwriting it with the defaults.
+constexpr auto INVALID_SETTINGS_SUFFIX {".invalid"};
+/// Root element of a JUCE XML properties file.
+constexpr auto PROPERTIES_XML_TAG {"PROPERTIES"};
+
+/// Renames a settings file that exists but is not a readable XML properties file to `<name>.invalid`,
+/// replacing an older backup, so the user can recover its values after the defaults are saved.
+/// A missing file is left alone, since it simply starts from the defaults.
+void preserveInvalidSettingsFile(const juce::File& file)
+{
+    if (!file.existsAsFile() || juce::parseXMLIfTagMatches(file, PROPERTIES_XML_TAG) != nullptr) {
+        return;
+    }
+    const auto backup = file.getSiblingFile(file.getFileName() + INVALID_SETTINGS_SUFFIX);
+    if (backup.existsAsFile()) {
+        static_cast<void>(backup.deleteFile());
+    }
+    if (file.moveFileTo(backup)) {
+        logWarn(
+            "Settings file {} could not be read, so it was kept as {} and the defaults are used",
+            file.getFullPathName().quoted(),
+            backup.getFullPathName().quoted()
+        );
+    } else {
+        logWarn(
+            "Settings file {} could not be read or kept as a backup, so the defaults are used",
+            file.getFullPathName().quoted()
+        );
+    }
+}
+}  // namespace
+
 /// Recognizes a version-only launch before logging, single-instance forwarding, or GUI initialization.
 bool isVersionRequest(const juce::String& commandLine)
 {
@@ -129,6 +164,8 @@ juce::PropertiesFile::Options createApplicationSettingsOptions()
 
 /// Resolves settings and the adjacent plugin files beneath an explicitly supplied isolation root.
 /// An absolute folderName overrides JUCE's platform settings directory without changing native unset defaults.
+/// An existing settings file that is not a readable properties file is kept as a backup first,
+/// because JUCE would otherwise start from empty settings and save them over the original.
 juce::PropertiesFile::Options createApplicationSettingsOptions(const std::optional<juce::File>& dataRoot)
 {
     juce::PropertiesFile::Options options;
@@ -137,6 +174,7 @@ juce::PropertiesFile::Options createApplicationSettingsOptions(const std::option
     options.osxLibrarySubFolder = "Application Support";
     options.folderName = dataRoot ? dataRoot->getChildFile("AudioBatch/settings").getFullPathName() : "AudioBatch";
     options.storageFormat = juce::PropertiesFile::storeAsXML;
+    preserveInvalidSettingsFile(options.getDefaultFile());
     return options;
 }
 
