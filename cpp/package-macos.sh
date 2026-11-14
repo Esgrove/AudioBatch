@@ -178,8 +178,8 @@ write_distribution_xml() {
             return true;
         }
     </script>
-    <background file="icon_mac.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
-    <background-darkAqua file="icon_mac.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
+    <background file="installer_logo.tiff" mime-type="image/tiff" alignment="bottomleft" scaling="none"/>
+    <background-darkAqua file="installer_logo.tiff" mime-type="image/tiff" alignment="bottomleft" scaling="none"/>
     <license file="LICENSE.txt" mime-type="text/plain"/>
     <choices-outline>
         <line choice="choice_app"/>
@@ -275,7 +275,7 @@ package_cpp_macos() {
     cp "$notices" "$cli_root/usr/local/share/licenses/audiobatch/"
 
     cp "$REPO_ROOT/LICENSE" "$resources_dir/LICENSE.txt"
-    write_mac_installer_logo "$REPO_ROOT/assets/icon_mac.png" "$resources_dir/icon_mac.png"
+    write_mac_installer_logo "$REPO_ROOT/assets/icon_mac.png" "$resources_dir/installer_logo.tiff"
 
     print_magenta "Building component packages for AudioBatch $version..."
     build_mac_bundle_component_pkg \

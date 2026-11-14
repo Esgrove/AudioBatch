@@ -669,13 +669,33 @@ build_mac_bundle_component_pkg() {
     pkgbuild "${pkg_args[@]}" "$output_pkg" > /dev/null
 }
 
-# Write the installer background logo, a small PNG that the installer draws unscaled in the bottom left corner.
-# The icon is downscaled because the installer would otherwise show it at its full size over the whole window.
+# The installer logo size and its margins from the bottom left corner of the installer window, in points.
+# The left margin lines the logo up below the step list, and the bottom margin with the bottom of the content box.
+MAC_INSTALLER_LOGO_SIZE=120
+MAC_INSTALLER_LOGO_LEFT_MARGIN=36
+MAC_INSTALLER_LOGO_BOTTOM_MARGIN=52
+
+# Write the installer background logo as a TIFF with 1x and 2x representations, so it stays sharp on Retina displays.
+# The installer draws the background unscaled in the bottom left corner of the window.
+# Transparent padding places the logo, centered padding on both axes, since only the left and bottom margins show.
 write_mac_installer_logo() {
     local source_png="$1"
-    local output_png="$2"
+    local output_tiff="$2"
     require_command sips
-    sips --resampleHeightWidthMax 128 "$source_png" --out "$output_png" > /dev/null
+    require_command tiffutil
+    local work_dir scale size
+    work_dir=$(mktemp -d)
+    for scale in 1 2; do
+        size=$((MAC_INSTALLER_LOGO_SIZE * scale))
+        sips --resampleHeightWidthMax "$size" "$source_png" --out "$work_dir/icon@${scale}x.png" > /dev/null
+        sips --padToHeightWidth \
+            "$((size + 2 * MAC_INSTALLER_LOGO_BOTTOM_MARGIN * scale))" \
+            "$((size + 2 * MAC_INSTALLER_LOGO_LEFT_MARGIN * scale))" \
+            --setProperty dpiWidth "$((72 * scale))" --setProperty dpiHeight "$((72 * scale))" \
+            "$work_dir/icon@${scale}x.png" --out "$work_dir/logo@${scale}x.png" > /dev/null
+    done
+    tiffutil -cathidpicheck "$work_dir/logo@1x.png" "$work_dir/logo@2x.png" -out "$output_tiff" > /dev/null
+    rm -rf "$work_dir"
 }
 
 # Assemble, optionally sign with Developer ID Installer, and optionally notarize + staple a productbuild .pkg archive.
