@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
+#[cfg(feature = "render-benchmark")]
+use iced_baseview::widget::shader::Pipeline as _;
 use iced_baseview::widget::{Shader, shader};
 use iced_baseview::{Element, Length, Rectangle, mouse, wgpu};
 #[cfg(feature = "render-benchmark")]
@@ -1031,7 +1033,6 @@ impl BenchmarkRenderer {
         scale: f32,
         preferences: DisplayPreferences,
     ) -> Self {
-        use shader::Pipeline;
         let pipeline = SpectrogramPipeline::new(device, queue, format);
         let size = physical_size.map(|dimension| {
             dimension

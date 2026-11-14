@@ -116,6 +116,7 @@ pub(super) fn subscription(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::futures::executor::block_on;
 
     #[test]
     fn ordinary_observation_ignores_meter_publications_but_detects_external_controls() {
@@ -129,7 +130,6 @@ mod tests {
 
     #[test]
     fn unchanged_polls_emit_only_the_initial_synchronization() {
-        use iced::futures::executor::block_on;
         let parameters = Arc::new(Parameters::default());
         let shared = image_control_dsp::Imager::new().shared();
         let notifier = iced::PollSubNotifier::new();

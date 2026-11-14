@@ -1,5 +1,6 @@
 //! Centralized `ImageControl` palette and the shared Roboto faces used by labels and numeric values.
 
+use iced::advanced::text::Paragraph as _;
 use iced::widget::{button, checkbox, container, pick_list, slider, text_input};
 use iced::{Border, Color, Font, Theme};
 use iced_baseview as iced;
@@ -47,8 +48,6 @@ pub const CHECKBOX_SIZE: f32 = 16.0;
 
 /// Measures the same embedded face, shaping, and Iced em size used by production labels.
 pub fn text_width(content: &str, font: Font, size: f32) -> f32 {
-    use iced::advanced::text::Paragraph as _;
-
     let paragraph =
         <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(iced::advanced::text::Text {
             content,
@@ -235,6 +234,7 @@ pub fn parameter_slider(_: &Theme, status: slider::Status) -> slider::Style {
 
 #[cfg(test)]
 mod tests {
+    use super::super::layout::{self, BandHeadings};
     use super::*;
     use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
 
@@ -273,30 +273,24 @@ mod tests {
         let width = text_width;
         assert!(width("ImageControl", BOLD, TITLE_SIZE) <= 112.0);
         for value in ["-60.0 dB", "12.0 dB", "-inf dB", "100%", "100L", "2.00"] {
-            assert!(
-                width(value, MONO, VALUE_SIZE) <= super::super::layout::VALUE_WIDTH - 8.0,
-                "{value}"
-            );
+            assert!(width(value, MONO, VALUE_SIZE) <= layout::VALUE_WIDTH - 8.0, "{value}");
         }
         let link_width = CHECKBOX_SIZE + 6.0 + width("Link", TEXT, BAND_LINK_SIZE);
-        for name in super::super::layout::BAND_NAMES {
+        for name in layout::BAND_NAMES {
             assert!(
-                width(name, SEMIBOLD, BAND_TITLE_SIZE) + super::super::layout::BAND_SOLO_SIZE + 6.0 + link_width
-                    <= 160.0,
+                width(name, SEMIBOLD, BAND_TITLE_SIZE) + layout::BAND_SOLO_SIZE + 6.0 + link_width <= 160.0,
                 "{name}"
             );
         }
         assert!(width("Link", TEXT, BAND_LINK_SIZE) > width("Link", TEXT, LABEL_SIZE));
         const {
-            assert!(super::super::layout::BAND_SOLO_SIZE > 20.0);
+            assert!(layout::BAND_SOLO_SIZE > 20.0);
         }
         assert!(width("100 Hz to 20.0 kHz", TEXT, LABEL_SIZE) <= 160.0);
     }
 
     #[test]
     fn band_heading_breakpoint_uses_all_four_real_labels_and_the_rendered_em_sizes() {
-        use super::super::layout::{self, BandHeadings};
-
         {
             let mut system = font_system().write().expect("font system");
             for bytes in [ROBOTO, ROBOTO_SEMIBOLD] {

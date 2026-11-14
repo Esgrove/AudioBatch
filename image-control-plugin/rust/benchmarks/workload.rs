@@ -166,10 +166,8 @@ pub fn input_frame(index: usize, sample_rate: f64, channels: usize) -> [f32; 2] 
 mod signal_tests {
     #[test]
     fn moving_noise_is_repeatable_bounded_and_changes_stereo_balance() {
-        use super::SignalKind;
-
-        let frames = SignalKind::MovingNoise.frames(48_000.0, 2, 384_000);
-        assert_eq!(frames, SignalKind::MovingNoise.frames(48_000.0, 2, 384_000));
+        let frames = super::SignalKind::MovingNoise.frames(48_000.0, 2, 384_000);
+        assert_eq!(frames, super::SignalKind::MovingNoise.frames(48_000.0, 2, 384_000));
         assert!(
             frames
                 .iter()
@@ -187,7 +185,7 @@ mod signal_tests {
         assert!(balances.iter().any(|value| *value > 0.01));
         assert!(balances.iter().any(|value| *value < -0.01));
         assert_ne!(frames.first(), frames.get(48_000));
-        let mono = SignalKind::MovingNoise.frames(48_000.0, 1, 1000);
+        let mono = super::SignalKind::MovingNoise.frames(48_000.0, 1, 1000);
         assert!(mono.iter().all(|frame| frame[0].to_bits() == frame[1].to_bits()));
     }
 }
