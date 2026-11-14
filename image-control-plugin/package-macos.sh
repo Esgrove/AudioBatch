@@ -225,7 +225,7 @@ write_distribution_xml() {
 <installer-gui-script minSpecVersion="2">
     <title>ImageControl $version</title>
     <organization>com.esgrove</organization>
-    <options customize="allow" require-scripts="$require_scripts" hostArchitectures="arm64" rootVolumeOnly="true"/>
+    <options customize="always" require-scripts="$require_scripts" hostArchitectures="arm64" rootVolumeOnly="true"/>
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
     <volume-check>
         <allowed-os-versions>

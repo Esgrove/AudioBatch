@@ -165,13 +165,15 @@ write_distribution_xml() {
 <installer-gui-script minSpecVersion="2">
     <title>AudioBatch $version</title>
     <organization>com.esgrove</organization>
-    <options customize="allow" require-scripts="false" hostArchitectures="arm64" rootVolumeOnly="true"/>
+    <options customize="always" require-scripts="false" hostArchitectures="arm64" rootVolumeOnly="true"/>
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
     <volume-check>
         <allowed-os-versions>
             <os-version min="15.0"/>
         </allowed-os-versions>
     </volume-check>
+    <background file="icon_mac.png" mime-type="image/png" alignment="bottomleft" scaling="proportional"/>
+    <background-darkAqua file="icon_mac.png" mime-type="image/png" alignment="bottomleft" scaling="proportional"/>
     <license file="LICENSE.txt" mime-type="text/plain"/>
     <choices-outline>
         <line choice="choice_app"/>
@@ -191,7 +193,7 @@ write_distribution_xml() {
         visible="true"
         start_selected="true"
         title="audiobatch Command-Line Tool"
-        description="Install the audiobatch CLI into /usr/local/bin and zsh completions into /usr/local/share/zsh/site-functions."
+        description="Install the audiobatch CLI into /usr/local/bin, which is on the default PATH, and zsh completions into /usr/local/share/zsh/site-functions."
     >
         <pkg-ref id="com.esgrove.audiobatch.pkg.cli"/>
     </choice>
@@ -262,6 +264,7 @@ package_cpp_macos() {
     chmod 644 "$cli_root/usr/local/share/zsh/site-functions/_audiobatch"
 
     cp "$REPO_ROOT/LICENSE" "$resources_dir/LICENSE.txt"
+    cp "$REPO_ROOT/assets/icon_mac.png" "$resources_dir/icon_mac.png"
 
     print_magenta "Building component packages for AudioBatch $version..."
     build_mac_bundle_component_pkg \
