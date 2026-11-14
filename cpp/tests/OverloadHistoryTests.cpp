@@ -349,7 +349,7 @@ void OverloadHistoryTests::runAnalysisTests()
         constexpr int frames = 2 * GENERATED_BLOCK_SIZE;
         const auto file = directory.getChildFile("intersample.wav");
         expect(writeFloatWav(file, 1, frames, [](int, const int frame) {
-            const auto phase = std::numbers::pi / 2.0 * frame + std::numbers::pi / 4.0;
+            const auto phase = std::numbers::pi * 0.5 * frame + std::numbers::pi / 4.0;
             return static_cast<float>(1.2 * std::sin(phase));
         }));
         const auto record = analyzeFile(file);

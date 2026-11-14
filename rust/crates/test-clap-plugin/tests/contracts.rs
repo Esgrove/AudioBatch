@@ -237,7 +237,7 @@ fn render(case: &PluginExpectation, block: usize) -> Vec<i16> {
                         .get((start + frame) * source.channels + channel_index)
                         .copied()
                         .unwrap_or(0),
-                ) * (1.0 / 32768.0);
+                ) * (1.0 / 32_768.0);
             }
         }
         let mut output = vec![vec![0.0; frames]; source.channels];
@@ -246,7 +246,7 @@ fn render(case: &PluginExpectation, block: usize) -> Vec<i16> {
             if start + frame >= latency as usize {
                 for channel in &output {
                     let sample = channel.get(frame).copied().expect("output sample");
-                    rendered.push((sample * 32768.0).clamp(-32768.0, 32767.0).floor() as i16);
+                    rendered.push((sample * 32_768.0).clamp(-32_768.0, 32_767.0).floor() as i16);
                 }
             }
         }

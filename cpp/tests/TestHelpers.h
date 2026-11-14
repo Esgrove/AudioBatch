@@ -111,18 +111,29 @@ struct TestAudioDeviceState {
     /// Non-owning callback installed only while the simulated driver is playing.
     juce::AudioIODeviceCallback* callback {nullptr};
 
+    /// Error that every device open returns, empty for a successful open.
     juce::String openError;
+    /// Name of the simulated device type.
     juce::String typeName {"Test audio"};
 
+    /// Names of the devices created, in creation order.
     juce::StringArray attemptedDevices;
+    /// Output devices the simulated type offers.
     juce::StringArray outputDeviceNames {"Test output"};
+    /// Devices that fail to open as if disconnected.
     juce::StringArray unavailableDeviceNames;
 
+    /// Sample rate the simulated device offers and reports.
     double sampleRate {48'000.0};
+    /// Callback size the simulated device offers and reports.
     int blockSize {512};
+    /// Number of balanced closes of a successfully opened device.
     int closes {0};
+    /// Number of input channels requested by the latest open.
     int inputChannels {0};
+    /// Number of successful device opens.
     int opens {0};
+    /// Number of output channels requested by the latest open.
     int outputChannels {0};
 };
 

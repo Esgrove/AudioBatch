@@ -43,25 +43,40 @@ struct PreviewEnrichmentState {
         work(std::move(onWork))
     {}
 
+    /// Worker-owned cache connection, used only on the worker thread.
     AnalysisCache cache;
+    /// Delivers artifacts of the selected file from the worker thread.
     PreviewEnrichmentScheduler::Completion completion;
+    /// Injected test work that replaces enrichment of a candidate, empty in the application.
     PreviewEnrichmentScheduler::Work work;
+    /// Path of the candidate the worker is processing, empty while idle.
     juce::String activePath;
     /// Optional audio repair stage, protected by mutex and cleared at job retirement.
     juce::String activity;
 
+    /// Set once by shutdown, after which nothing is published.
     std::atomic<bool> stopped {false};
+    /// Incremented to cancel the active job cooperatively.
     std::atomic<std::uint64_t> interruption {0};
+    /// Incremented by each foreground load or removal, invalidating older deliveries.
     std::atomic<std::uint64_t> loadGeneration {1};
 
+    /// Wakes the worker when work arrives or the scheduler stops.
     std::condition_variable condition;
+    /// Protects every non-atomic field shared with the worker.
     std::mutex mutex;
 
+    /// Committed outputs to persist, each with the converted source row to remove.
     std::deque<std::pair<AudioAnalysisRecord, std::optional<AudioAnalysisRecord>>> outputs;
+    /// Directory candidates waiting for optional artifact repair.
     std::deque<PreviewEnrichmentCandidate> pending;
+    /// Candidate of the job the worker is processing, empty while idle.
     std::optional<PreviewEnrichmentCandidate> activeCandidate;
+    /// Identity of the selected file, the only one whose artifacts are delivered.
     std::optional<utils::FileIdentity> selected;
+    /// Explicit gain edits whose rows were not stored yet, retried once after foreground completion.
     std::unordered_map<juce::String, CustomGainUpdate> deferredGains;
+    /// Explicit gain edits waiting to be persisted, coalesced by path.
     std::unordered_map<juce::String, CustomGainUpdate> gains;
 
     /// Directory paths accepted for this pass. Selected paths outside this set do not inflate its total.
@@ -69,12 +84,18 @@ struct PreviewEnrichmentState {
     /// Successfully retired directory paths, preventing selected promotion from counting a file twice.
     std::unordered_set<juce::String> completedPaths;
 
+    /// True while foreground work has finished and directory repair may read missing artifacts.
     bool gateOpen {false};
+    /// True when deferred gain edits should be retried once.
     bool retryDeferredGains {false};
+    /// True when the selected file still needs a job.
     bool selectionPending {false};
 
+    /// Interruption counter captured by the active job.
     std::uint64_t activeInterruption {0};
+    /// Selection generation captured by the active job.
     std::uint64_t activeSelectionGeneration {0};
+    /// Generation of the latest selection request.
     std::uint64_t selectionGeneration {0};
 };
 
