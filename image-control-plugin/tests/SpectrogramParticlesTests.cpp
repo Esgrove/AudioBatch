@@ -394,6 +394,106 @@ TEST(SpectrogramParticles, LouderParticlesAreLarger)
     EXPECT_GE(particles[0].size, 0.5F);
 }
 
+TEST(SpectrogramParticles, PointsBelowTheDisplayGateDrawNothingAndKeepTheReference)
+{
+    // Content at -95 dBFS is below the -90 dBFS gate, even where the tilt raises it, so noise never shows.
+    SpectrogramParticleBuilder builder;
+    builder.addFrame(
+        std::array {point(1000.0F, 0.0F, levelFromDecibels(-95.0F)), point(16'000.0F, 0.0F, levelFromDecibels(-95.0F))},
+        FRAME_SECONDS
+    );
+    EXPECT_TRUE(builder.particles().empty());
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
+
+    // Quiet content just above the gate still auto-scales and draws.
+    builder.addFrame(std::array {point(1000.0F, 0.0F, levelFromDecibels(-85.0F))}, FRAME_SECONDS);
+    ASSERT_EQ(builder.particles().size(), 1U);
+    EXPECT_NEAR(builder.referenceLevel(), -85.0F, 1.0e-3F);
+    EXPECT_FLOAT_EQ(builder.particles()[0].emphasis, 1.0F);
+}
+
+TEST(SpectrogramParticles, ContentBelowTheDisplayRangeDrawsAFadingHaze)
+{
+    SpectrogramParticleBuilder builder;
+    // The loudest point sets the reference to 0 dB, so the display range starts at -36 dB
+    // and the haze reaches 24 dB further down, to -60 dB.
+    const std::array points {
+        point(1000.0F, 0.0F, 1.0F),
+        point(1000.0F, 0.0F, levelFromDecibels(-20.0F)),
+        point(1000.0F, 0.0F, levelFromDecibels(-33.0F)),
+        point(1000.0F, 0.0F, levelFromDecibels(-40.0F)),
+        point(1000.0F, 0.0F, levelFromDecibels(-50.0F)),
+        point(1000.0F, 0.0F, levelFromDecibels(-65.0F)),
+    };
+    builder.addFrame(points, FRAME_SECONDS);
+
+    const auto particles = builder.particles();
+    ASSERT_EQ(particles.size(), 5U);
+    // Content well inside the range draws only its core and halo.
+    EXPECT_FLOAT_EQ(particles[0].haze, 0.0F);
+    EXPECT_FLOAT_EQ(particles[1].haze, 0.0F);
+    // At the bottom of the range the cores crossfade into the haze.
+    EXPECT_GT(particles[2].haze, 0.0F);
+    EXPECT_LT(particles[2].haze, 1.0F);
+    EXPECT_GT(particles[2].emphasis, 0.0F);
+    // Below the range only the haze remains, fading with the level and far fainter than the content above.
+    for (const std::size_t index : {3U, 4U}) {
+        EXPECT_FLOAT_EQ(particles[index].haze, 1.0F);
+        EXPECT_FLOAT_EQ(particles[index].emphasis, 0.0F);
+        EXPECT_GT(brightness(particles[index]), 0.0F);
+        EXPECT_LT(brightness(particles[index]), brightness(particles[1]) * 0.1F);
+    }
+    EXPECT_GT(brightness(particles[3]), brightness(particles[4]));
+}
+
+TEST(SpectrogramParticles, ParticleColoursEvenOutTheLuminanceOfTheFrequencyColours)
+{
+    const auto luminance = [](const float red, const float green, const float blue) {
+        return 0.2126F * red + 0.7152F * green + 0.0722F * blue;
+    };
+    const auto colourAt = [](const float frequency) {
+        // The builder looks colours up in a table of 1024 evenly spaced shares, rounding the share down.
+        constexpr double lastStep = 1023.0;
+        const double share = frequencyToShare(frequency, FrequencyScale::logarithmic);
+        return frequencyColour(static_cast<float>(std::floor(share * lastStep) / lastStep));
+    };
+    SpectrogramParticleBuilder builder;
+    const std::array frequencies {30.0F, 400.0F, 1000.0F, 10'000.0F};
+    std::vector<SpectralPoint> points;
+    points.reserve(frequencies.size());
+    for (const float frequency : frequencies) {
+        // Each point is at the same tilted level, so every particle has the same weight.
+        points.push_back(point(frequency, 0.0F, levelFromDecibels(-3.0F * std::log2(frequency / 1000.0F))));
+    }
+    builder.addFrame(points, FRAME_SECONDS);
+    const auto particles = builder.particles();
+    ASSERT_EQ(particles.size(), frequencies.size());
+
+    std::vector<float> gains;
+    for (std::size_t index = 0; index < frequencies.size(); ++index) {
+        SCOPED_TRACE(frequencies[index]);
+        const LinearColour palette = colourAt(frequencies[index]);
+        const auto& particle = particles[index];
+        // A single gain brightens the colour, so its hue stays.
+        const float gain = particle.green / palette.green;
+        EXPECT_NEAR(particle.red / palette.red, gain, gain * 1.0e-3F);
+        EXPECT_NEAR(particle.blue / palette.blue, gain, gain * 1.0e-3F);
+        gains.push_back(gain);
+    }
+    // The bright mids keep their colour, and the dark bass and highs get a bounded gain.
+    EXPECT_NEAR(gains[1], gains[2], gains[2] * 1.0e-3F);
+    EXPECT_GT(gains[0], gains[2] * 1.3F);
+    EXPECT_GT(gains[3], gains[2] * 1.3F);
+    EXPECT_LE(gains[0], gains[2] * 1.6F + 1.0e-4F);
+    // The luminance spread between the bass and the mids shrinks.
+    const LinearColour bass = colourAt(30.0F);
+    const LinearColour mids = colourAt(1000.0F);
+    const float paletteRatio = luminance(bass.red, bass.green, bass.blue) / luminance(mids.red, mids.green, mids.blue);
+    const float particleRatio = luminance(particles[0].red, particles[0].green, particles[0].blue)
+        / luminance(particles[2].red, particles[2].green, particles[2].blue);
+    EXPECT_GT(particleRatio, paletteRatio * 1.3F);
+}
+
 TEST(SpectrogramParticles, FrequencyColoursRunFromRedThroughGreenToBlueAndViolet)
 {
     const auto colourAt = [](const double frequency) {

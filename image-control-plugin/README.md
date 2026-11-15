@@ -165,6 +165,8 @@ Brightness represents the analyzed source power from both channels, not the powe
 Frequency reassignment sharpens tonal traces without replacing their original bin power.
 Spectral tilt and automatic scaling make quiet and loud material readable,
 so the display is a relative view rather than an absolute level meter.
+Content below the displayed range shows as a dim haze, down to a -90 dBFS gate,
+so faint sub-bass or air remains distinguishable from silence.
 Pre shows the input and Post the processed output, including the difference signal when Delta is active.
 
 The analyzer and rendering run separately from audio processing.
@@ -307,6 +309,10 @@ These inputs are not a record of listening evaluations.
 
 - Add a Metal backend for `SpectrogramRenderer` on macOS.
   [JUCE Metal rendering on macOS](https://github.com/UVI-Dev/JUCE/tree/metal-renderer)
+- Investigate keeping a soloed quiet band from auto-scaling too bright in the Post spectrogram.
+  The reference could also follow the full-band signal, limiting the lift to about 12 dB,
+  either from a light analysis of the full-band output or by holding the reference from before the solo.
+  Delta stays exempt, since magnifying small differences is its purpose.
 
 ## Known issues
 

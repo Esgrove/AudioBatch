@@ -100,8 +100,11 @@ constexpr float MAX_SIGMA_PIXELS {6.0F};
 /// so neighbouring dots join softly without losing their sharp cores.
 constexpr float HALO_SIGMA_PIXELS {4.0F};
 /// Brightness of the halo of the most emphasised particles relative to the core.
-/// The halo scales with the particle's emphasis, so faint particles draw only their cores instead of a haze.
+/// The halo scales with the particle's emphasis, so faint particles draw only their cores.
 constexpr float HALO_WEIGHT {0.2F};
+/// Spread of the haze of content below the display range, in logical pixels,
+/// wide and coreless so faint content shows as a dim cloud rather than as dots.
+constexpr float HAZE_SIGMA_PIXELS {3.5F};
 /// How many spreads a sprite reaches before it is cut off.
 constexpr float SPRITE_REACH_SIGMAS {3.0F};
 /// Scale from the accumulated particle energy to the tone curve.
@@ -120,7 +123,9 @@ constexpr float UPSAMPLE_RADIUS {1.0F};
 /// Longest pending fade, in seconds. A longer fade leaves nothing visible anyway.
 constexpr double MAX_PENDING_FADE_SECONDS {10.0};
 /// Floats per particle instance, matching SpectrogramParticle.
-constexpr int PARTICLE_FLOATS {8};
+constexpr int PARTICLE_FLOATS {9};
+/// Vertex attribute location of the particle haze share in the particle vertex shader.
+constexpr GLuint HAZE_ATTRIBUTE {5};
 /// Glow chain level the solid mode draws its layers from: a quarter of the plot size,
 /// smooth enough for calm outlines while still following the shapes of the particles.
 /// The field copies the level before the upsampling adds the smaller levels into it,
@@ -263,6 +268,7 @@ SpectrogramParticleUniforms::SpectrogramParticleUniforms(const juce::OpenGLShade
     coreSigma(program, "coreSigma"),
     haloSigma(program, "haloSigma"),
     haloWeight(program, "haloWeight"),
+    hazeSigma(program, "hazeSigma"),
     maxSigma(program, "maxSigma"),
     reach(program, "reach"),
     targetSize(program, "targetSize")
@@ -418,6 +424,16 @@ void SpectrogramRenderer::newOpenGLContextCreated()
         4, 1, juce::gl::GL_FLOAT, juce::gl::GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, emphasis))
     );
     juce::gl::glVertexAttribDivisor(4, 1);
+    juce::gl::glEnableVertexAttribArray(HAZE_ATTRIBUTE);
+    juce::gl::glVertexAttribPointer(
+        HAZE_ATTRIBUTE,
+        1,
+        juce::gl::GL_FLOAT,
+        juce::gl::GL_FALSE,
+        stride,
+        bufferOffset(offsetof(SpectrogramParticle, haze))
+    );
+    juce::gl::glVertexAttribDivisor(HAZE_ATTRIBUTE, 1);
     juce::gl::glBindVertexArray(0);
     juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, 0);
 
@@ -738,6 +754,7 @@ void SpectrogramRenderer::drawParticles(const float scale)
     particleUniforms->coreSigma.set(CORE_SIGMA_PIXELS * scale);
     particleUniforms->maxSigma.set(MAX_SIGMA_PIXELS * scale);
     particleUniforms->haloSigma.set(HALO_SIGMA_PIXELS * scale);
+    particleUniforms->hazeSigma.set(HAZE_SIGMA_PIXELS * scale);
     juce::gl::glDrawArraysInstanced(juce::gl::GL_TRIANGLE_STRIP, 0, 4, static_cast<GLsizei>(drawing.size()));
 }
 

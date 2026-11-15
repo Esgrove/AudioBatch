@@ -527,12 +527,17 @@ This spectral coherence is not the same estimator as the time-domain centered co
 ### Worker-side particles
 
 [`SpectrogramParticleBuilder`](src/ui/SpectrogramParticles.h) maps each `SpectralPoint` to plot-relative position,
-horizontal spread, linear-light color, size, and emphasis.
+horizontal spread, linear-light color, size, emphasis, and haze share.
 The horizontal scale is logarithmic or HTK mel, shared with overlays and input handling.
 Position maps full left to the top, center to the middle, and full right to the bottom.
 
+Points below -90 dBFS, before the tilt, are dropped and do not move the reference, so noise never shows.
 Displayed level receives a 3 dB-per-octave tilt around 1 kHz
 and is mapped into a 36 dB range below an automatic reference.
+Content up to 24 dB below that range draws a dim haze, fading linearly in dB,
+so faint extremes such as sub-bass and air differ visibly from silence.
+The haze crossfades into the particle cores over the bottom quarter of the range,
+where the contrast curve keeps the cores dark.
 The reference rises immediately and falls at 12 dB per audio second, with a -90 dB lower bound.
 Frames carry their tier identity and absolute audio endpoint.
 Simultaneous tier frames share a reference after all due peaks are observed,
@@ -541,6 +546,9 @@ The common release clock advances only once per endpoint, independently of tier 
 Contrast emphasizes stronger points and increases toward the highs.
 Frame-duration weighting and persistence compensation keep tiers with different hops from drawing at arbitrary brightness.
 Colors are either a frequency palette interpolated in linear light or a phase-coherence blend.
+Particle frequency colors are partially brightened towards an even luminance, keeping their hues,
+so the dark red bass and blue highs are not much fainter than the yellow and green mids.
+The overlays use the unmodified palette.
 The resulting relative display is not an absolute output-level meter.
 
 ### Message-thread refresh and overlays
@@ -625,7 +633,8 @@ The frame pipeline is:
 
 1. Size the accumulation target in physical display pixels and retain its image across a successful resize.
 2. Multiply the previous accumulation by an exponential persistence fade.
-3. Add instanced Gaussian particle sprites, with sharp cores and emphasis-dependent halos.
+3. Add instanced Gaussian particle sprites, with sharp cores and emphasis-dependent halos,
+   sharing each particle's weight with a wide, coreless haze Gaussian by its haze share.
 4. Downsample into five glow levels and upsample additively to build bloom.
 5. In solid mode, retain a smooth density field for translucent layers and contour treatment.
 6. Composite accumulated energy and glow with exposure, tone mapping, background, and rounded plot edges.

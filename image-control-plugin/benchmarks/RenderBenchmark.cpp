@@ -262,6 +262,8 @@ Workload loadWorkload(const Options& options)
             .blue = readFloat(*input),
             .size = readFloat(*input),
             .emphasis = readFloat(*input),
+            // The shared ICRB0001 layout predates the haze, so its particles draw only cores and halos.
+            .haze = 0.0F,
         };
         const std::array fields {
             particle.x,

@@ -11,8 +11,8 @@ endif()
 
 project(
     "ImageControl"
-    VERSION 1.0.0
-    DESCRIPTION "Multiband stereo imaging plugin with mid/side and pan controls"
+    VERSION 1.0.1
+    DESCRIPTION "Multiband stereo imaging plugin with mid/side, width, and pan controls"
     LANGUAGES CXX C
 )
 
@@ -92,13 +92,13 @@ juce_add_plugin(
 if(APPLE)
     if(TARGET ImageControl_VST3)
         set_target_properties(
-            ImageControl_VST3 PROPERTIES XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED
-                                                                                 NO
+            ImageControl_VST3 PROPERTIES
+            XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
+            XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO
         )
         add_custom_target(
             ImageControl_VST3Sign ALL
-            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle
-                    "$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
+            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle"$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
             DEPENDS ImageControl_VST3
             VERBATIM
         )
@@ -109,8 +109,7 @@ if(APPLE)
         )
         add_custom_target(
             ImageControl_AUSign ALL
-            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle
-                    "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
+            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
             DEPENDS ImageControl_AU
             VERBATIM
         )
@@ -263,13 +262,13 @@ juce_add_binary_data(
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-SemiBold.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/RobotoMono-Regular.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/RobotoMono-SemiBold.ttf"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/screen.vert"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/fade.frag"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/particle.vert"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/particle.frag"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/downsample.frag"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/upsample.frag"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/composite.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/downsample.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/fade.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/particle.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/particle.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/screen.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/upsample.frag"
 )
 
 target_link_libraries(

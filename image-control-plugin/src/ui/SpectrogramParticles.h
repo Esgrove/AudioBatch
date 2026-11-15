@@ -16,6 +16,15 @@
 
 namespace esgrove::image_control
 {
+
+/// Lowest auto-scale reference of the particle brightness, in tilted dB,
+/// so silence and noise floors are not scaled up to full brightness.
+constexpr float MIN_REFERENCE_DB {-80.0F};
+
+/// Quietest point level that is displayed at all, as calibrated power: -90 dBFS before the tilt.
+/// Quieter points draw nothing and do not move the auto-scale reference, so noise never shows.
+constexpr float MIN_DISPLAY_LEVEL {1.0e-9F};
+
 /// How the particles are coloured.
 /// Frequency colours run from red in the bass through yellow, green, cyan, and blue to violet in the highs,
 /// and phase colours from blue for in-phase content to red for anti-phase content.
@@ -31,10 +40,6 @@ enum class FrequencyScale : std::uint8_t {
     logarithmic,
     mel,
 };
-
-/// Lowest auto-scale reference of the particle brightness, in tilted dB,
-/// so silence and noise floors are not scaled up to full brightness.
-constexpr float MIN_REFERENCE_DB {-90.0F};
 
 /// A colour with float channels from 0 to 1 in linear light, for the additive particle buffer.
 struct LinearColour {
@@ -66,16 +71,10 @@ struct SpectrogramParticle {
     /// How strongly the contrast curve emphasises the particle, from 0 for the faintest to 1 for the strongest,
     /// which scales the brightness of its halo, so faint particles draw only their sharp cores.
     float emphasis {1.0F};
+    /// Share of the particle's weight drawn as a wide, dim haze instead of its core and halo, from 0 to 1.
+    /// Content below the display range draws only haze, so faint content stays distinguishable from silence.
+    float haze {0.0F};
 };
-
-[[nodiscard]] double frequencyToShare(double frequency, FrequencyScale scale);
-[[nodiscard]] double shareToFrequency(double share, FrequencyScale scale);
-[[nodiscard]] double frequencyToMel(double frequency);
-[[nodiscard]] double melToFrequency(double mel);
-[[nodiscard]] LinearColour frequencyColour(float share);
-[[nodiscard]] LinearColour toSrgb(const LinearColour& colour);
-[[nodiscard]] float contrastCurve(float share, float contrast);
-[[nodiscard]] float frequencyContrast(float frequency, float contrast);
 
 /// Reusable storage for one tier at a common analyzer deadline.
 struct PendingSpectralFrame {
@@ -142,4 +141,15 @@ private:
     /// Auto-scale reference: the tilted level in dB that draws the brightest particles.
     float referenceDecibels {MIN_REFERENCE_DB};
 };
+
+[[nodiscard]] LinearColour frequencyColour(float share);
+[[nodiscard]] LinearColour toSrgb(const LinearColour& colour);
+
+[[nodiscard]] double frequencyToShare(double frequency, FrequencyScale scale);
+[[nodiscard]] double shareToFrequency(double share, FrequencyScale scale);
+[[nodiscard]] double frequencyToMel(double frequency);
+[[nodiscard]] double melToFrequency(double mel);
+[[nodiscard]] float contrastCurve(float share, float contrast);
+[[nodiscard]] float frequencyContrast(float frequency, float contrast);
+
 }  // namespace esgrove::image_control

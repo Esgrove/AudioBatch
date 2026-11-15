@@ -53,6 +53,8 @@ struct SpectrogramParticleUniforms {
     juce::OpenGLShaderProgram::Uniform haloSigma;
     /// Constant halo brightness relative to the core.
     juce::OpenGLShaderProgram::Uniform haloWeight;
+    /// Haze spread in physical pixels, updated for the display scale.
+    juce::OpenGLShaderProgram::Uniform hazeSigma;
     /// Maximum horizontal spread in physical pixels, updated for the display scale.
     juce::OpenGLShaderProgram::Uniform maxSigma;
     /// Constant sprite reach in spreads.

@@ -46,6 +46,15 @@ constexpr double AUTO_SCALE_RELEASE_DB_PER_SECOND {12.0};
 constexpr float MIN_PARTICLE_SIZE {0.5F};
 /// Weakest particle weight that is still drawn. Fainter particles would not show.
 constexpr float MIN_PARTICLE_WEIGHT {1.0e-4F};
+/// Level range below the display range over which faint content fades out as haze, in dB.
+/// Content this far below the bottom of the display range draws nothing.
+constexpr float HAZE_RANGE_DB {24.0F};
+/// Share of the display range above its bottom over which the haze crossfades into the particle cores,
+/// so the faintest drawn cores, which the contrast curve keeps dark, do not leave a gap above the haze.
+constexpr float HAZE_FADE_SHARE {0.25F};
+/// Weight of the haze at the bottom of the display range, relative to the full weight of the loudest particle.
+/// The haze spreads over a much larger area than a core, so it stays dim even where many bins overlap.
+constexpr float HAZE_BRIGHTNESS {0.006F};
 /// Time constant of the hop-weighting flash, in seconds, independent of particle persistence.
 constexpr double FLASH_SECONDS {0.04};
 /// Horizontal spread of a particle relative to the distance to its neighbours,
@@ -62,6 +71,19 @@ constexpr float DECIBELS_PER_POWER_DECADE {10.0F};
 constexpr LinearColour IN_PHASE_COLOUR {.red = 0.1F, .green = 0.45F, .blue = 1.0F};
 /// Colour of anti-phase content in the phase colours, in linear light: a warm red.
 constexpr LinearColour ANTI_PHASE_COLOUR {.red = 1.0F, .green = 0.07F, .blue = 0.1F};
+
+/// Rec. 709 relative luminance weight of the linear red primary.
+constexpr float LUMINANCE_RED {0.2126F};
+/// Rec. 709 relative luminance weight of the linear green primary.
+constexpr float LUMINANCE_GREEN {0.7152F};
+/// Rec. 709 relative luminance weight of the linear blue primary.
+constexpr float LUMINANCE_BLUE {0.0722F};
+/// Luminance the particle frequency colours are brightened towards.
+/// The red bass and the blue highs are much darker than the yellow and green mids,
+/// so their particles get a gain of up to MAX_LUMINANCE_GAIN, which keeps their hues.
+constexpr float TARGET_LUMINANCE {0.45F};
+/// Largest brightness gain of a particle frequency colour, which keeps the compensation partial.
+constexpr float MAX_LUMINANCE_GAIN {1.6F};
 
 /// Channel value up to which the sRGB transfer curve is linear, in encoded sRGB.
 constexpr float SRGB_LINEAR_LIMIT {0.04045F};
@@ -82,6 +104,7 @@ constexpr double MEL_CORNER_FREQUENCY {700.0};
 constexpr double MEL_LOGARITHM_BASE {10.0};
 /// Ratio between the upper and lower frequency bounds on the logarithmic axis.
 constexpr double LOG_FREQUENCY_RATIO {static_cast<double>(MAX_FREQUENCY) / static_cast<double>(MIN_FREQUENCY)};
+
 /// Cached natural logarithm of LOG_FREQUENCY_RATIO, initialized once at first axis query.
 double logFrequencySpan()
 {
@@ -148,14 +171,32 @@ LinearColour linearStopColour(const FrequencyColourStop& stop)
     return {.red = srgbToLinear(stop.red), .green = srgbToLinear(stop.green), .blue = srgbToLinear(stop.blue)};
 }
 
-/// Builds the frequency colour of evenly spaced shares of the frequency axis.
+/// Builds the particle colour of evenly spaced shares of the frequency axis:
+/// the frequency colour, partially brightened towards an even luminance with its hue kept,
+/// so the dark red bass and blue highs are not much fainter than the mids at the same weight.
 std::vector<LinearColour> buildFrequencyColours()
 {
     std::vector<LinearColour> table(FREQUENCY_COLOUR_STEPS);
     for (std::size_t step = 0; step < FREQUENCY_COLOUR_STEPS; ++step) {
-        table[step] = frequencyColour(static_cast<float>(step) / static_cast<float>(FREQUENCY_COLOUR_STEPS - 1));
+        const LinearColour colour
+            = frequencyColour(static_cast<float>(step) / static_cast<float>(FREQUENCY_COLOUR_STEPS - 1));
+        const float luminance
+            = LUMINANCE_RED * colour.red + LUMINANCE_GREEN * colour.green + LUMINANCE_BLUE * colour.blue;
+        const float gain = std::clamp(std::sqrt(TARGET_LUMINANCE / luminance), 1.0F, MAX_LUMINANCE_GAIN);
+        table[step] = {.red = colour.red * gain, .green = colour.green * gain, .blue = colour.blue * gain};
     }
     return table;
+}
+
+/// Returns how much of the haze a point draws from its unclamped share of the display range:
+/// none HAZE_RANGE_DB below the range, rising linearly in dB to all of it at the bottom of the range,
+/// and fading out again over the bottom HAZE_FADE_SHARE of the range as the particle cores take over.
+float hazeLevel(const float share)
+{
+    if (share < 0.0F) {
+        return std::clamp(1.0F + share * (DISPLAY_RANGE_DB / HAZE_RANGE_DB), 0.0F, 1.0F);
+    }
+    return std::clamp(1.0F - share / HAZE_FADE_SHARE, 0.0F, 1.0F);
 }
 /// Rejects malformed display results before logarithms, axis transforms, or palette indexing can consume them.
 /// Finite positions and coherence are clamped later, but invalid geometry and power are discarded.
@@ -289,9 +330,12 @@ std::span<const SpectrogramParticle> SpectrogramParticleBuilder::particles() con
 }
 
 /// Turns the points of one analyzed frame into particles.
+/// Points quieter than MIN_DISPLAY_LEVEL are dropped before they can move the reference.
 /// A particle's level in dB gets the spectral tilt,
 /// and its share of the display range below the auto-scale reference goes through the contrast curve,
 /// which keeps the noise floor dark and sets the particle's brightness, size, and halo.
+/// Content up to HAZE_RANGE_DB below the display range draws a dim haze instead,
+/// which crossfades into the cores at the bottom of the range.
 /// A particle sits at its bin's reassigned frequency, so a sine's main lobe shares one horizontal position.
 /// All tiers at one deadline use a common reference based on the latest peak retained for every tier.
 /// The reference rises at once and releases by 12 dB per second of shared audio time.
@@ -324,7 +368,7 @@ void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> p
     pending.frameSeconds = frame.frameSeconds;
     float loudest = MIN_REFERENCE_DB;
     for (const auto& point : points) {
-        if (!validPoint(point)) {
+        if (!validPoint(point) || point.level < MIN_DISPLAY_LEVEL) {
             continue;
         }
         const float tilt = TILT_DB_PER_OCTAVE * std::log2(point.frequency / TILT_PIVOT_FREQUENCY);
@@ -372,9 +416,12 @@ void SpectrogramParticleBuilder::appendParticles(const PendingSpectralFrame& fra
     const float floorDecibels = referenceDecibels - DISPLAY_RANGE_DB;
     for (std::size_t index = 0; index < frame.points.size(); ++index) {
         const auto& point = frame.points[index];
-        const float share = std::clamp((frame.tiltedDecibels[index] - floorDecibels) / DISPLAY_RANGE_DB, 0.0F, 1.0F);
+        const float rangeShare = (frame.tiltedDecibels[index] - floorDecibels) / DISPLAY_RANGE_DB;
+        const float share = std::clamp(rangeShare, 0.0F, 1.0F);
         const float emphasis = contrastCurve(share, frequencyContrast(point.frequency, static_cast<float>(contrast)));
-        const float weight = emphasis * flash;
+        const float coreWeight = emphasis * flash;
+        const float hazeWeight = hazeLevel(rangeShare) * HAZE_BRIGHTNESS * flash;
+        const float weight = coreWeight + hazeWeight;
         if (weight < MIN_PARTICLE_WEIGHT) {
             continue;
         }
@@ -394,6 +441,7 @@ void SpectrogramParticleBuilder::appendParticles(const PendingSpectralFrame& fra
             .blue = colour.blue * weight,
             .size = MIN_PARTICLE_SIZE + (1.0F - MIN_PARTICLE_SIZE) * emphasis,
             .emphasis = emphasis,
+            .haze = hazeWeight / weight,
         });
     }
 }
