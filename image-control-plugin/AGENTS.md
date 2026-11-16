@@ -302,7 +302,13 @@ and `./install.sh --validate` also validates the installed VST3 and, on macOS, t
 Both change the installed plugins and the Audio Unit registry,
 so run them only when the user asks for an installation or installed-format validation.
 
-The sanitizer and coverage scripts are macOS only, and each uses its own build directory:
+The sanitizer and coverage scripts are macOS only, and each uses its own build directory.
+All sanitizer builds use RelWithDebInfo for optimization with debug symbols and frame pointers.
+Sanitizer builds treat warnings in owned targets, including their JUCE modules, as errors.
+Fetched dependencies keep their own warning policies.
+`CMakePresets.json` owns the sanitizer configure, build, and test settings.
+`sanitize.sh` selects the matching preset and discovers Homebrew LLVM for RTSan.
+Direct `macos-rtsan` preset use requires `IMAGE_CONTROL_LLVM_PREFIX` set to `brew --prefix llvm`:
 
 - `./sanitize.sh` runs the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer in `cmake-build-mac-asan/`.
 - `./sanitize.sh --thread` runs them under ThreadSanitizer in `cmake-build-mac-tsan/`.

@@ -244,6 +244,7 @@ so the configuration symlinks are real links, not text placeholders.
 `./format.sh` formats the plugin's C++, CMake, shell, Python, and prose files, and `./format.sh --check` verifies them.
 On macOS, `./sanitize.sh` runs the plugin tests with AddressSanitizer and UndefinedBehaviorSanitizer,
 `./sanitize.sh --thread` uses ThreadSanitizer, and `./coverage.sh --lcov` reports plugin source coverage.
+All sanitizer builds use RelWithDebInfo for optimization with debug symbols and frame pointers.
 `./sanitize.sh --realtime` uses Homebrew LLVM to check cold real-time processing and the build-tree VST3 on macOS.
 Detector controls and clean direct-processing cases are separate from verified `BLOCKED` JUCE host/wrapper audits.
 Diagnostics are retained under `cmake-build-mac-rtsan/realtime-artifacts/`. No plugin is installed.

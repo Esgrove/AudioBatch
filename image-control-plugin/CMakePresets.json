@@ -1,0 +1,129 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 4,
+    "minor": 2,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "macos-sanitizer-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "IMAGE_CONTROL_BUILD_TESTS": "ON",
+        "IMAGE_CONTROL_COVERAGE": "OFF",
+        "AUDIOBATCH_LTO": "OFF",
+        "AUDIOBATCH_NATIVE_CPU": "OFF"
+      }
+    },
+    {
+      "name": "macos-asan",
+      "displayName": "ImageControl ASan and UBSan",
+      "inherits": "macos-sanitizer-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-asan",
+      "cacheVariables": {
+        "IMAGE_CONTROL_SANITIZE": "address,undefined"
+      }
+    },
+    {
+      "name": "macos-tsan",
+      "displayName": "ImageControl TSan",
+      "inherits": "macos-sanitizer-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-tsan",
+      "cacheVariables": {
+        "IMAGE_CONTROL_SANITIZE": "thread"
+      }
+    },
+    {
+      "name": "macos-rtsan",
+      "displayName": "ImageControl RealtimeSanitizer",
+      "inherits": "macos-sanitizer-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-rtsan",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "$env{IMAGE_CONTROL_LLVM_PREFIX}/bin/clang",
+        "CMAKE_CXX_COMPILER": "$env{IMAGE_CONTROL_LLVM_PREFIX}/bin/clang++",
+        "IMAGE_CONTROL_SANITIZE": "realtime"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "macos-asan",
+      "configurePreset": "macos-asan",
+      "targets": [
+        "ImageControlTests"
+      ]
+    },
+    {
+      "name": "macos-tsan",
+      "configurePreset": "macos-tsan",
+      "targets": [
+        "ImageControlTests"
+      ]
+    },
+    {
+      "name": "macos-rtsan",
+      "configurePreset": "macos-rtsan",
+      "targets": [
+        "ImageControlRealtimeTests"
+      ],
+      "jobs": 4
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "macos-sanitizer-tests-base",
+      "hidden": true,
+      "configuration": "RelWithDebInfo",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "timeout": 180
+      },
+      "filter": {
+        "include": {
+          "label": "unit"
+        }
+      }
+    },
+    {
+      "name": "macos-asan",
+      "inherits": "macos-sanitizer-tests-base",
+      "configurePreset": "macos-asan",
+      "environment": {
+        "UBSAN_OPTIONS": "$penv{UBSAN_OPTIONS}:halt_on_error=1:print_stacktrace=1"
+      }
+    },
+    {
+      "name": "macos-tsan",
+      "inherits": "macos-sanitizer-tests-base",
+      "configurePreset": "macos-tsan",
+      "environment": {
+        "TSAN_OPTIONS": "$penv{TSAN_OPTIONS}:halt_on_error=1:exitcode=66"
+      }
+    },
+    {
+      "name": "macos-rtsan",
+      "inherits": "macos-sanitizer-tests-base",
+      "configurePreset": "macos-rtsan",
+      "filter": {
+        "include": {
+          "label": "realtime"
+        }
+      },
+      "environment": {
+        "RTSAN_SYMBOLIZER_PATH": "$env{IMAGE_CONTROL_LLVM_PREFIX}/bin/llvm-symbolizer"
+      }
+    }
+  ]
+}

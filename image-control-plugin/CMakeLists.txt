@@ -216,7 +216,7 @@ endif()
 
 # The plugin's own sources get strict warnings as errors, like the AudioBatch sources.
 # JUCE headers are written to JUCE's own rules, so they are treated as system or external headers.
-# The JUCE module sources compiled into the target keep JUCE's recommended warnings only.
+# The JUCE module sources keep JUCE's recommended warnings, promoted to errors in sanitizer builds.
 set(IMAGE_CONTROL_JUCE_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../cpp/JUCE/modules")
 if(MSVC)
     set(IMAGE_CONTROL_WARNINGS
@@ -449,6 +449,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
             set_tests_properties(ImageControlRealtime.${case_name} PROPERTIES LABELS "realtime;realtime-clean")
         endforeach()
         # Observed on arm64 macOS with Homebrew LLVM 23: the host locks its MIDI event list before entering the bundle.
+        # Optimized builds inline MidiEventList::clear into associateWith, so match the enclosing host operation.
         # These fail-fast audits are BLOCKED, not a claim that the hosted path is real-time safe.
         foreach(case_name IN ITEMS hosted-first-callback hosted-cached-parameters)
             image_control_add_realtime_case(
@@ -459,8 +460,6 @@ if(IMAGE_CONTROL_BUILD_TESTS)
                 "--argument=$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
                 --expect
                 pthread_mutex_lock
-                --stack
-                "juce::MidiEventList::clear"
                 --stack
                 "juce::VST3PluginInstanceHeadless::associateWith"
                 --stack
@@ -476,10 +475,10 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         # A changed cached parameter adds one Darwin thread-local initialization calloc beneath parameter delivery.
         # Require the exact call/owner pair in each report, not an arbitrary mutex or allocator anywhere in the stack.
         set(IMAGE_CONTROL_HOSTED_LOCK_STACK
-            "(?s:unsafe function .pthread_mutex_(lock|unlock). .*juce::(MidiEventList::(clear|getEventCount)|JuceVST3Component::processAudio))"
+            "(?s:unsafe function .pthread_mutex_(lock|unlock). .*juce::(MidiEventList::(clear|getEventCount)|VST3PluginInstanceHeadless::associateWith|JuceVST3Component::processAudio))"
         )
         set(IMAGE_CONTROL_HOSTED_PARAMETER_STACK
-            "(?s:unsafe function .calloc. .*juce::setValueAndNotifyIfChanged.*juce::JuceVST3Component::processParameterChanges)"
+            "(?s:unsafe function .calloc. .*juce::JuceVST3Component::processParameterChanges)"
         )
         image_control_add_realtime_case(
             hosted-first-callback-diagnostic
@@ -716,4 +715,17 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/PresetWriter.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.cpp"
         TARGET_DIRECTORY ImageControlPresetWriter PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
+endif()
+
+# Fail sanitizer builds on warnings from owned targets, including the JUCE modules they compile.
+# Fetched dependencies retain their own warning policies.
+if(IMAGE_CONTROL_SANITIZE)
+    get_property(
+        image_control_targets
+        DIRECTORY
+        PROPERTY BUILDSYSTEM_TARGETS
+    )
+    foreach(target IN LISTS image_control_targets)
+        set_property(TARGET ${target} PROPERTY COMPILE_WARNING_AS_ERROR YES)
+    endforeach()
 endif()
