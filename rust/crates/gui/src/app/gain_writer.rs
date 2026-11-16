@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -16,7 +17,13 @@ use audiobatch_core::{AnalysisCache, AnalysisRecord};
 #[non_exhaustive]
 pub struct GainWrite {
     record: AnalysisRecord,
+    completion: GainWriteCompletion,
 }
+
+/// Shared completion bit observed without queue locks or GUI-thread database reads.
+/// Completion means the identity-conditional write returned, including a rejected identity or write error.
+#[derive(Clone)]
+pub struct GainWriteCompletion(Arc<AtomicBool>);
 
 /// GUI-owned writer whose thread never waits for the GUI to adopt a completion.
 pub(super) struct GainWriter {
@@ -43,7 +50,13 @@ impl GainWrite {
                 custom_gain_db: record.custom_gain_db,
                 ..AnalysisRecord::default()
             },
+            completion: GainWriteCompletion(Arc::default()),
         }
+    }
+
+    /// Returns a bounded acknowledgement that becomes ready only after the worker returns from persistence.
+    pub fn completion(&self) -> GainWriteCompletion {
+        self.completion.clone()
     }
 
     /// Returns the target source path of the captured write.
@@ -56,6 +69,13 @@ impl GainWrite {
     #[cfg(test)]
     pub const fn custom_gain_db(&self) -> Option<f32> {
         self.record.custom_gain_db
+    }
+}
+
+impl GainWriteCompletion {
+    /// Returns whether persistence has finished, never treating queue admission as completion.
+    pub fn is_complete(&self) -> bool {
+        self.0.load(Ordering::Acquire)
     }
 }
 
@@ -87,7 +107,9 @@ impl GainWriter {
                     pending.edits.remove(&path)
                 };
                 if let Some(edit) = edit {
+                    let completion = edit.completion();
                     write(edit);
+                    completion.0.store(true, Ordering::Release);
                 }
             }
         });
@@ -137,7 +159,10 @@ mod test_gain_coalescing {
     use std::sync::mpsc;
     use std::time::Duration;
 
+    use audiobatch_core::record::same_custom_gain;
     use audiobatch_core::waveform::WaveformBuilder;
+
+    use crate::results::ResultsDelegate;
 
     use super::*;
 
@@ -252,6 +277,93 @@ mod test_gain_coalescing {
             assert_eq!(stored.length_in_samples, record.length_in_samples);
             assert_eq!(stored.short_term_loudness, record.short_term_loudness);
         }
+    }
+
+    /// A run starting during a submitted write stays protected after completion, without hiding a later external clear.
+    #[test]
+    fn scan_started_during_write_protects_only_that_run_and_never_replays_the_edit() {
+        for edited_gain in [Some(2.0), None] {
+            let directory = tempfile::TempDir::new().expect("source directory");
+            let path = test_fixtures::copy_fixture(&directory, "sine_mono_24000_16.wav", None);
+            let cache = Arc::new(AnalysisCache::in_memory());
+            let mut original = audiobatch_core::analyze_file(&path, &|| false, &mut |_| {});
+            original.custom_gain_db = Some(-3.0);
+            cache.store_analysis(&original).expect("initial measurements");
+            let mut delegate = ResultsDelegate::new(1600.0);
+            delegate.set_record(original);
+            delegate.set_custom_gain(&path, edited_gain);
+            let edit = delegate.take_gain_write(&path).expect("explicit write");
+            let completion = edit.completion();
+            let (entered_sender, entered) = mpsc::channel();
+            let (release, released) = mpsc::channel();
+            let writer_cache = Arc::clone(&cache);
+            let mut writer = GainWriter::with_write(move |edit| {
+                entered_sender.send(()).expect("writer entered");
+                released.recv_timeout(Duration::from_secs(1)).expect("release writer");
+                writer_cache
+                    .store_custom_gain_for_record(&edit.record, edit.record.custom_gain_db)
+                    .expect("persist explicit edit");
+            });
+            writer.enqueue(edit);
+            entered.recv_timeout(Duration::from_secs(1)).expect("blocked writer");
+            assert!(!completion.is_complete());
+            let snapshot = delegate.analysis_gain_snapshot();
+            let captured = cache.get_analysis(&path).expect("scan reads before persistence");
+            assert!(same_custom_gain(captured.custom_gain_db, Some(-3.0)));
+            release.send(()).expect("release worker");
+            writer.finish().expect("draining worker").join().expect("writer exits");
+            assert!(completion.is_complete());
+            delegate.set_analysis_record(captured, &snapshot);
+            let displayed = delegate
+                .row_for(&path)
+                .and_then(|row| row.ready_record())
+                .expect("ready row");
+            assert!(same_custom_gain(displayed.custom_gain_db, edited_gain));
+            assert!(delegate.take_gain_write(&path).is_none());
+            assert!(same_custom_gain(
+                cache.get_analysis(&path).expect("written gain").custom_gain_db,
+                edited_gain
+            ));
+            cache.store_custom_gain(&path, None).expect("external clear");
+            let authoritative = delegate.analysis_gain_snapshot();
+            delegate.set_analysis_record(cache.get_analysis(&path).expect("later scan result"), &authoritative);
+            assert!(
+                delegate
+                    .row_for(&path)
+                    .and_then(|row| row.ready_record())
+                    .expect("ready row")
+                    .custom_gain_db
+                    .is_none()
+            );
+            assert!(delegate.take_gain_write(&path).is_none());
+            assert!(
+                cache
+                    .get_analysis(&path)
+                    .expect("external clear retained")
+                    .custom_gain_db
+                    .is_none()
+            );
+        }
+    }
+
+    /// Submission and dequeue are not completion, only returning from the blocked sink acknowledges the write.
+    #[test]
+    fn completion_waits_for_the_worker_to_finish_persistence() {
+        let (entered_sender, entered) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let mut writer = GainWriter::with_write(move |_| {
+            entered_sender.send(()).expect("worker entered sink");
+            released.recv_timeout(Duration::from_secs(1)).expect("release sink");
+        });
+        let edit = GainWrite::new(&AnalysisRecord::default());
+        let completion = edit.completion();
+        assert!(!completion.is_complete());
+        writer.enqueue(edit);
+        entered.recv_timeout(Duration::from_secs(1)).expect("sink blocks");
+        assert!(!completion.is_complete());
+        release.send(()).expect("release worker");
+        writer.finish().expect("worker").join().expect("worker exits");
+        assert!(completion.is_complete());
     }
 
     /// A queued edit carries its original identity and cannot leak into a replacement at the same path.

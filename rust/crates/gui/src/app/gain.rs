@@ -122,7 +122,7 @@ impl AppView {
     }
 
     /// Submits edits of rows a scan will discard, leaving retained rows on their original debounce.
-    /// Retained pending edits must still override analysis results captured before their writer submission.
+    /// The run's gain snapshot protects retained edits across submission and asynchronous writer completion.
     pub(super) fn store_unlisted_gains(&mut self, files: &[PathBuf], cx: &mut Context<Self>) {
         let listed: HashSet<_> = files.iter().filter(|path| !self.excluded.contains(*path)).collect();
         let mut removed = Vec::new();

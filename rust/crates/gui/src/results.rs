@@ -36,7 +36,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Window, canvas, div, point, px, rgba,
 };
 
-use crate::app::gain_writer::GainWrite;
+use crate::app::gain_writer::{GainWrite, GainWriteCompletion};
 use crate::file_drag::DraggedFiles;
 use crate::files::{OPEN_PARENT_FOLDER_LABEL, REVEAL_LABEL};
 use crate::menus::{
@@ -295,6 +295,8 @@ pub struct ResultsDelegate {
     active_fractions: HashMap<PathBuf, f32>,
     /// Explicit edits, including clears, scoped to the file identity they were made for.
     gain_edits: HashMap<PathBuf, CustomGainEdit>,
+    /// Monotonic identity of explicit edits, independent of submission and worker completion.
+    gain_revision: u64,
     /// Definitions of the shown columns in display order, which changes when the user drags a column.
     columns: Vec<Column>,
     /// Keys of the shown columns in display order, matching `columns`.
@@ -342,12 +344,22 @@ pub struct RowMenuState {
 }
 
 /// An explicit gain choice belonging only to one version of a file.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct CustomGainEdit {
     file_size: u64,
     modified_time_ms: i64,
     gain: Option<f32>,
     pending: bool,
+    revision: u64,
+    completion: Option<GainWriteCompletion>,
+}
+
+/// Gain provenance captured before a run can read the cache, without retaining any gain values or artifacts.
+/// Only edits pending or still writing at that boundary, and revisions made later, protect scan adoption.
+#[derive(Debug, Clone, Default)]
+pub struct AnalysisGainSnapshot {
+    revision: u64,
+    unsettled: HashMap<PathBuf, u64>,
 }
 
 /// One column of the results table.
@@ -474,6 +486,7 @@ impl ResultsDelegate {
             index: HashMap::new(),
             active_fractions: HashMap::new(),
             gain_edits: HashMap::new(),
+            gain_revision: 0,
             columns: Vec::new(),
             order: Vec::new(),
             all_columns,
@@ -699,30 +712,41 @@ impl ResultsDelegate {
         }
     }
 
-    /// Stores the result of a file, adding a row when the file is not listed yet.
-    /// Only a still-pending explicit edit overrides the incoming persisted gain.
+    /// Injects an authoritative persisted result without a background run, adding an absent row.
+    /// Only a still-pending explicit edit overrides its persisted gain.
     /// Returns a presentation override, never a request to replay an inherited database value.
+    #[cfg(test)]
     #[expect(
         clippy::option_option,
         reason = "The outer option requests persistence, the inner option is a nullable gain"
     )]
-    pub fn set_record(&mut self, mut record: AnalysisRecord) -> Option<Option<f32>> {
-        self.active_fractions.remove(&record.path);
-        let carried_over = self.merge_custom_gain(&mut record);
-        let Some(row) = self.row_mut(&record.path) else {
-            self.index.insert(record.path.clone(), self.rows.len());
-            self.rows.push(ResultRow::from_record(record));
-            return None;
-        };
-        row.state = RowState::Done;
-        row.record = Some(record);
-        row.message = None;
-        carried_over
+    pub fn set_record(&mut self, record: AnalysisRecord) -> Option<Option<f32>> {
+        self.adopt_record(record, None)
+    }
+
+    /// Captures paths whose explicit edits may be absent from cache reads of the about-to-start run.
+    #[must_use]
+    pub fn analysis_gain_snapshot(&self) -> AnalysisGainSnapshot {
+        AnalysisGainSnapshot {
+            revision: self.gain_revision,
+            unsettled: self
+                .gain_edits
+                .iter()
+                .filter(|(_, edit)| edit.pending || edit.completion.as_ref().is_some_and(|write| !write.is_complete()))
+                .map(|(path, edit)| (path.clone(), edit.revision))
+                .collect(),
+        }
+    }
+
+    /// Adopts analysis measurements using the gain provenance captured before this run started.
+    pub fn set_analysis_record(&mut self, record: AnalysisRecord, snapshot: &AnalysisGainSnapshot) {
+        self.adopt_record(record, Some(snapshot));
     }
 
     /// Sets or clears the custom gain of a file with a usable result.
     /// Returns true when the gain changed.
     pub fn set_custom_gain(&mut self, path: &Path, custom_gain_db: Option<f32>) -> bool {
+        let revision = self.gain_revision + 1;
         let Some(record) = self
             .row_mut(path)
             .and_then(|row| row.record.as_mut())
@@ -735,22 +759,28 @@ impl ResultsDelegate {
             modified_time_ms: record.modified_time_ms,
             gain: custom_gain_db,
             pending: true,
+            revision,
+            completion: None,
         };
         let changed = !same_custom_gain(record.custom_gain_db, custom_gain_db);
         record.custom_gain_db = custom_gain_db;
+        self.gain_revision = revision;
         self.gain_edits.insert(path.to_path_buf(), edit);
         changed
     }
 
     /// Takes a newly requested gain edit once, never replaying inherited values after a cross-process clear.
     pub fn take_gain_write(&mut self, path: &Path) -> Option<GainWrite> {
-        let edit = self.gain_edits.get_mut(path)?;
-        if !edit.pending {
+        let edit = self.gain_edits.get(path).filter(|edit| edit.pending)?;
+        let record = self.row_for(path)?.ready_record()?;
+        if edit.file_size != record.file_size || edit.modified_time_ms != record.modified_time_ms {
             return None;
         }
+        let write = GainWrite::new(record);
+        let edit = self.gain_edits.get_mut(path)?;
         edit.pending = false;
-        let record = self.row_for(path)?.ready_record()?;
-        Some(GainWrite::new(record))
+        edit.completion = Some(write.completion());
+        Some(write)
     }
 
     /// Attaches only the native preview field for the same captured source, preserving messages and measurements.
@@ -841,7 +871,7 @@ impl ResultsDelegate {
             }
             row.state = RowState::Done;
             if let Some(mut record) = cached(&row.path) {
-                if let Some(edit) = self.gain_edits.get(&row.path).copied() {
+                if let Some(edit) = self.gain_edits.get(&row.path).cloned() {
                     if edit.pending
                         && edit.file_size == record.file_size
                         && edit.modified_time_ms == record.modified_time_ms
@@ -1302,6 +1332,26 @@ impl ResultsDelegate {
         }
     }
 
+    /// Replaces measurements while resolving gain authority at their source-specific adoption boundary.
+    #[expect(clippy::option_option, reason = "The inner option preserves an explicit gain clear")]
+    fn adopt_record(
+        &mut self,
+        mut record: AnalysisRecord,
+        snapshot: Option<&AnalysisGainSnapshot>,
+    ) -> Option<Option<f32>> {
+        self.active_fractions.remove(&record.path);
+        let carried_over = self.merge_custom_gain_for_analysis(&mut record, snapshot);
+        let Some(row) = self.row_mut(&record.path) else {
+            self.index.insert(record.path.clone(), self.rows.len());
+            self.rows.push(ResultRow::from_record(record));
+            return None;
+        };
+        row.state = RowState::Done;
+        row.record = Some(record);
+        row.message = None;
+        carried_over
+    }
+
     /// Applies an unsubmitted explicit edit only to the same file identity.
     /// An identity change retires the old edit rather than letting it affect a replacement file.
     #[expect(
@@ -1309,9 +1359,23 @@ impl ResultsDelegate {
         reason = "The outer option requests persistence, the inner option is a nullable gain"
     )]
     fn merge_custom_gain(&mut self, incoming: &mut AnalysisRecord) -> Option<Option<f32>> {
+        self.merge_custom_gain_for_analysis(incoming, None)
+    }
+
+    /// Protects only revisions a run may have missed, never extending a submitted edit into future runs.
+    /// The snapshot carries no write intent, so adopting a stale gain cannot replay an already submitted edit.
+    #[expect(clippy::option_option, reason = "The inner option preserves an explicit gain clear")]
+    fn merge_custom_gain_for_analysis(
+        &mut self,
+        incoming: &mut AnalysisRecord,
+        snapshot: Option<&AnalysisGainSnapshot>,
+    ) -> Option<Option<f32>> {
         let incoming_gain = incoming.custom_gain_db;
-        if let Some(edit) = self.gain_edits.get(&incoming.path).copied() {
-            if edit.pending
+        if let Some(edit) = self.gain_edits.get(&incoming.path) {
+            let protected = snapshot.is_some_and(|snapshot| {
+                edit.revision > snapshot.revision || snapshot.unsettled.get(&incoming.path) == Some(&edit.revision)
+            });
+            if (edit.pending || protected)
                 && edit.file_size == incoming.file_size
                 && edit.modified_time_ms == incoming.modified_time_ms
             {
@@ -2208,6 +2272,118 @@ mod test_custom_gain {
         assert_eq!(compare_rows(&without, &lower, ColumnKey::Gain), Ordering::Less);
         assert_eq!(compare_rows(&lower, &higher, ColumnKey::Gain), Ordering::Less);
         assert_eq!(compare_rows(&higher, &without, ColumnKey::Gain), Ordering::Greater);
+    }
+}
+
+#[cfg(test)]
+mod test_analysis_gain_adoption {
+    use super::*;
+
+    /// Builds a ready row with a stable synthetic identity for deterministic adoption ordering.
+    fn delegate() -> ResultsDelegate {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_record(record(Some(-3.0)));
+        delegate
+    }
+
+    /// Returns the same source measurements with a chosen persisted gain.
+    fn record(gain: Option<f32>) -> AnalysisRecord {
+        AnalysisRecord {
+            path: PathBuf::from("/source.wav"),
+            file_size: 100,
+            modified_time_ms: 1000,
+            status: AnalysisStatus::Analyzed,
+            custom_gain_db: gain,
+            ..AnalysisRecord::default()
+        }
+    }
+
+    /// Reads the row through the same ready-record accessor used by the application.
+    fn gain(delegate: &ResultsDelegate) -> Option<f32> {
+        delegate
+            .row_for(Path::new("/source.wav"))
+            .and_then(ResultRow::ready_record)
+            .expect("ready source")
+            .custom_gain_db
+    }
+
+    /// An old result cannot revert a later edit, whether delivered before or after release submits it.
+    #[test]
+    fn scan_started_before_edit_preserves_gain_before_and_after_submission() {
+        for submit in [false, true] {
+            let mut delegate = delegate();
+            let snapshot = delegate.analysis_gain_snapshot();
+            delegate.set_custom_gain(Path::new("/source.wav"), Some(2.0));
+            if submit {
+                assert!(delegate.take_gain_write(Path::new("/source.wav")).is_some());
+            }
+            delegate.set_analysis_record(record(Some(-3.0)), &snapshot);
+            assert!(same_custom_gain(gain(&delegate), Some(2.0)), "submitted: {submit}");
+            assert_eq!(delegate.take_gain_write(Path::new("/source.wav")).is_none(), submit);
+        }
+    }
+
+    /// A pending edit at run start stays protected even when release submits it before result delivery.
+    #[test]
+    fn scan_started_with_pending_edit_preserves_it_after_submission() {
+        let mut delegate = delegate();
+        delegate.set_custom_gain(Path::new("/source.wav"), Some(2.0));
+        let snapshot = delegate.analysis_gain_snapshot();
+        delegate
+            .take_gain_write(Path::new("/source.wav"))
+            .expect("one explicit write");
+        delegate.set_analysis_record(record(Some(-3.0)), &snapshot);
+        assert!(same_custom_gain(gain(&delegate), Some(2.0)));
+        assert!(delegate.take_gain_write(Path::new("/source.wav")).is_none());
+    }
+
+    /// An explicit clear is a protected edit, not an absent override.
+    #[test]
+    fn scan_started_before_clear_preserves_clear_after_submission() {
+        let mut delegate = delegate();
+        let snapshot = delegate.analysis_gain_snapshot();
+        delegate.set_custom_gain(Path::new("/source.wav"), None);
+        let write = delegate
+            .take_gain_write(Path::new("/source.wav"))
+            .expect("explicit clear");
+        assert!(write.custom_gain_db().is_none());
+        delegate.set_analysis_record(record(Some(-3.0)), &snapshot);
+        assert!(gain(&delegate).is_none());
+        assert!(delegate.take_gain_write(Path::new("/source.wav")).is_none());
+    }
+
+    /// A protected revision never applies to a replacement source at the same path.
+    #[test]
+    fn stale_scan_protection_does_not_cross_source_identity() {
+        let mut delegate = delegate();
+        let snapshot = delegate.analysis_gain_snapshot();
+        delegate.set_custom_gain(Path::new("/source.wav"), Some(2.0));
+        delegate
+            .take_gain_write(Path::new("/source.wav"))
+            .expect("explicit write");
+        let mut replacement = record(Some(4.0));
+        replacement.file_size += 1;
+        delegate.set_analysis_record(replacement, &snapshot);
+        assert!(same_custom_gain(gain(&delegate), Some(4.0)));
+        assert!(delegate.take_gain_write(Path::new("/source.wav")).is_none());
+    }
+
+    /// A later edit supersedes the run's original protected revision without becoming a second submission.
+    #[test]
+    fn later_edit_revision_supersedes_the_edit_captured_at_scan_start() {
+        let mut delegate = delegate();
+        delegate.set_custom_gain(Path::new("/source.wav"), Some(2.0));
+        let snapshot = delegate.analysis_gain_snapshot();
+        delegate
+            .take_gain_write(Path::new("/source.wav"))
+            .expect("first explicit write");
+        delegate.set_custom_gain(Path::new("/source.wav"), None);
+        delegate
+            .take_gain_write(Path::new("/source.wav"))
+            .expect("newer explicit clear");
+        delegate.set_analysis_record(record(Some(2.0)), &snapshot);
+        assert!(gain(&delegate).is_none());
+        assert!(delegate.take_gain_write(Path::new("/source.wav")).is_none());
     }
 }
 

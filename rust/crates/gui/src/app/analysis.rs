@@ -12,6 +12,7 @@ use crossbeam_channel::{Receiver, TryRecvError};
 use gpui_kit::{Context, SharedString, Task, Window};
 
 use super::AppView;
+use crate::results::AnalysisGainSnapshot;
 
 /// How often the analysis and normalization events are applied to the table.
 pub(super) const ANALYSIS_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -47,6 +48,8 @@ pub(super) struct RunProgress {
     analyzed: usize,
     cached: usize,
     failed: usize,
+    /// Explicit gain revisions that this run's cache reads might not include.
+    gains: AnalysisGainSnapshot,
 }
 
 /// Events already received, with the channel's terminal state kept distinct from an empty batch.
@@ -70,6 +73,7 @@ impl RunProgress {
             analyzed: 0,
             cached: 0,
             failed: 0,
+            gains: AnalysisGainSnapshot::default(),
         }
     }
 
@@ -227,12 +231,17 @@ impl AppView {
             drain.detach();
         }
         self.analysis_workers += 1;
+        // Capture before any worker can read the cache, including writes submitted but not yet completed.
+        let gains = self.table.read(cx).delegate().analysis_gain_snapshot();
         let audiobatch_core::coordinator::AnalysisRun { run_id, receiver } = coordinator.start(AnalysisOptions {
             input_paths: inputs,
             recursive: true,
             refresh,
         });
-        self.run = Some(RunProgress::new(run_id, kind));
+        self.run = Some(RunProgress {
+            gains,
+            ..RunProgress::new(run_id, kind)
+        });
         self.status = SharedString::from(match kind {
             RunKind::Scan => "Scanning for audio files...",
             RunKind::Reanalyze => "Analyzing...",
@@ -272,7 +281,7 @@ impl AppView {
         let mut completed = false;
         let excluded = &self.excluded;
         let selected = self.selected.as_deref();
-        let run = &mut self.run;
+        let Some(run) = &mut self.run else { return };
         self.table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             for event in events.into_iter().filter(|event| event.run_id() == run_id) {
@@ -289,9 +298,7 @@ impl AppView {
                     AnalysisEvent::Started { path, .. } => delegate.mark_started(&path),
                     AnalysisEvent::Progress { path, fraction, .. } => delegate.mark_progress(&path, fraction),
                     AnalysisEvent::Finished { record, .. } => {
-                        if let Some(run) = run {
-                            run.record(&record);
-                        }
+                        run.record(&record);
                         if record.status == AnalysisStatus::Failed {
                             tracing::warn!(
                                 "Analysis failed for \"{}\": {}",
@@ -309,7 +316,7 @@ impl AppView {
                         if selected != Some(record.path.as_path()) {
                             record.waveform = None;
                         }
-                        delegate.set_record(record);
+                        delegate.set_analysis_record(record, &run.gains);
                     }
                     AnalysisEvent::Completed { .. } => {
                         delegate.sort_rows();
@@ -451,7 +458,78 @@ fn spawn_event_drain(receiver: Receiver<AnalysisEvent>, cx: &Context<AppView>) -
 
 #[cfg(test)]
 mod test_run_progress {
+    use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
+
     use super::*;
+    use crate::app::LaunchOptions;
+    use crate::test_helpers::plugin_dispatcher;
+
+    /// Delivers captured events through the production adoption path after a release has submitted the edit.
+    #[gpui_kit::test]
+    fn finished_scan_event_preserves_a_newer_submitted_gain_without_replaying_it(cx: &TestAppContext) {
+        let (_, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::menus::install(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| AppView::new(&LaunchOptions::default(), plugin_dispatcher(), window, cx))
+            })
+            .expect("production test view")
+        });
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                let path = view.test_directory.path().join("source.wav");
+                let captured = AnalysisRecord {
+                    path: path.clone(),
+                    file_size: 100,
+                    modified_time_ms: 1000,
+                    status: AnalysisStatus::Analyzed,
+                    custom_gain_db: Some(-3.0),
+                    ..AnalysisRecord::default()
+                };
+                view.table.update(cx, |state, _| {
+                    state.delegate_mut().set_record(captured.clone());
+                });
+                let gains = view.table.read(cx).delegate().analysis_gain_snapshot();
+                view.run = Some(RunProgress {
+                    gains,
+                    ..RunProgress::new(1, RunKind::Scan)
+                });
+                view.table.update(cx, |state, _| {
+                    let delegate = state.delegate_mut();
+                    delegate.set_custom_gain(&path, Some(2.0));
+                    delegate.take_gain_write(&path).expect("release submits explicit edit");
+                });
+                view.apply_analysis_events(
+                    vec![
+                        AnalysisEvent::Planned {
+                            run_id: 1,
+                            files: vec![path.clone()],
+                            stale_count: 0,
+                        },
+                        AnalysisEvent::Finished {
+                            run_id: 1,
+                            record: Box::new(captured),
+                        },
+                    ],
+                    cx,
+                );
+                view.table.update(cx, |state, _| {
+                    let delegate = state.delegate_mut();
+                    let record = delegate
+                        .row_for(&path)
+                        .and_then(|row| row.ready_record())
+                        .expect("ready row");
+                    assert!(audiobatch_core::record::same_custom_gain(
+                        record.custom_gain_db,
+                        Some(2.0)
+                    ));
+                    assert!(delegate.take_gain_write(&path).is_none());
+                });
+                assert!(view.run.as_ref().is_some_and(|run| run.finished == 1));
+            });
+        });
+    }
 
     #[test]
     fn event_drain_distinguishes_empty_connected_and_terminal_batches() {
