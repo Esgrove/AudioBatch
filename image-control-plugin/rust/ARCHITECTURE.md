@@ -271,8 +271,9 @@ The analysis windows affect visualization response only, not audio latency.
 ## Particle projection and GPU rendering
 
 [`particles.rs`](crates/dsp/src/particles.rs) projects observations without graphics dependencies.
+Points below -90 dBFS, before the tilt, are dropped and do not move the reference, so noise never shows.
 Displayed level receives a 3 dB/octave tilt around 1 kHz and maps into a 36 dB range below an adaptive reference.
-The reference attacks immediately and releases at 12 dB per audio second, with a -90 dB floor.
+The reference attacks immediately and releases at 12 dB per audio second, with a -80 dB floor.
 Simultaneous tiers share one reference update, retaining each tier's latest peak between deadlines.
 Release is independent of tier count, arrival order, input chunking, and UI refresh cadence.
 
@@ -445,6 +446,8 @@ They establish resource and pass contracts, not screenshot or pixel-golden equiv
 `./test.sh --miri` covers bounded parameter/controller and admission contracts, not full native FIR or GPU execution.
 `./rtsan.sh` separates positive detector controls from required-clean packaged callbacks,
 including cold automation, reset, concurrent state restore, and two-editor lifecycle with live monitoring.
+On macOS, the lifecycle case also clicks the Pre and Post header buttons through AppKit,
+except under `CI`, where the desktop session makes fixed-position synthetic clicks unreliable.
 The license audit checks the resolved dependency graph with cargo-deny.
 Build-tree pluginval checks validate the exact packaged format.
 Windows package and parity checks do not establish broad native GUI or playback qualification.

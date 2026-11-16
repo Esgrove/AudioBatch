@@ -92,13 +92,13 @@ juce_add_plugin(
 if(APPLE)
     if(TARGET ImageControl_VST3)
         set_target_properties(
-            ImageControl_VST3 PROPERTIES
-            XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
-            XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO
+            ImageControl_VST3 PROPERTIES XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED
+                                                                                 NO
         )
         add_custom_target(
             ImageControl_VST3Sign ALL
-            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle"$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
+            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle
+                    "$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
             DEPENDS ImageControl_VST3
             VERBATIM
         )
@@ -109,7 +109,8 @@ if(APPLE)
         )
         add_custom_target(
             ImageControl_AUSign ALL
-            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
+            COMMAND /bin/bash "${CMAKE_CURRENT_SOURCE_DIR}/../common.sh" sign_mac_plugin_bundle
+                    "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
             DEPENDS ImageControl_AU
             VERBATIM
         )

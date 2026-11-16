@@ -118,7 +118,30 @@ fn shared_deadlines_attack_before_coloring_and_release_once_with_retained_tier_p
     builder.add_frame(&[], frame(5, 0.4, true));
     assert!((builder.reference_level() + 2.4).abs() < 1.0e-6);
     builder.add_frame(&[], frame(0, 100.0, true));
-    assert!((builder.reference_level() + 90.0).abs() < 1.0e-6);
+    assert!((builder.reference_level() + 80.0).abs() < 1.0e-6);
+}
+
+#[test]
+fn points_below_the_display_gate_draw_nothing_and_keep_the_reference() {
+    let mut builder = ParticleBuilder::new();
+    // Content at -95 dBFS is below the -90 dBFS gate, even where the tilt raises it, so noise never shows.
+    let below_gate = 10.0_f32.powf(-9.5);
+    builder.add_frame(
+        &[
+            point(1000.0, 1000.0, 0.0, below_gate, 1.0),
+            point(16_000.0, 16_000.0, 0.0, below_gate, 1.0),
+        ],
+        frame(0, 0.01, true),
+    );
+    assert_eq!(builder.particles(), []);
+    assert!((builder.reference_level() + 80.0).abs() < 1.0e-6);
+    // Quiet content above the lowest reference still auto-scales and draws.
+    builder.add_frame(
+        &[point(1000.0, 1000.0, 0.0, 10.0_f32.powf(-7.5), 1.0)],
+        frame(0, 0.02, true),
+    );
+    assert_eq!(builder.particles().len(), 1);
+    assert!((builder.reference_level() + 75.0).abs() < 1.0e-3);
 }
 
 #[test]
@@ -268,7 +291,7 @@ fn overflow_retains_newest_tail_and_drain_reset_reuse_storage() {
     assert_eq!(drained.len(), 65_536);
     assert_eq!(builder.particles(), []);
     builder.reset();
-    assert!((builder.reference_level() + 90.0).abs() < 1.0e-6);
+    assert!((builder.reference_level() + 80.0).abs() < 1.0e-6);
     builder.add_frame(&[point(1000.0, 1000.0, 0.0, 1.0, 1.0)], frame(0, 0.01, true));
     builder.drain(&mut drained);
     assert_eq!(drained.len(), 1);

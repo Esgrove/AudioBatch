@@ -6,7 +6,11 @@ use crate::analyzer::{ANALYSIS_TIER_COUNT, SpectralFrameInfo, SpectralPoint};
 pub const MAXIMUM_PARTICLES: usize = 65_536;
 /// Maximum copied observations per tier and deadline, including externally supplied frames.
 pub const MAXIMUM_FRAME_POINTS: usize = 65_536;
-const MIN_REFERENCE_DB: f32 = -90.0;
+/// Lowest auto-scale reference in tilted dB, so silence and noise floors are not scaled up to full brightness.
+const MIN_REFERENCE_DB: f32 = -80.0;
+/// Quietest point power that is displayed at all, -90 dBFS before the tilt.
+/// Quieter points draw nothing and do not move the reference, so noise never shows.
+const MIN_DISPLAY_POWER: f32 = 1.0e-9;
 const DISPLAY_RANGE_DB: f32 = 36.0;
 const RELEASE_DB_PER_SECOND: f64 = 12.0;
 const DEFAULT_PERSISTENCE_SECONDS: f64 = 0.3;
@@ -281,6 +285,9 @@ impl ParticleBuilder {
         let mut peak = MIN_REFERENCE_DB;
         let retained_start = points.len().saturating_sub(MAXIMUM_FRAME_POINTS);
         for (index, &point) in points.iter().enumerate() {
+            if point.power() < MIN_DISPLAY_POWER {
+                continue;
+            }
             let tilted = tilted_decibels(point);
             peak = peak.max(tilted);
             if index >= retained_start {

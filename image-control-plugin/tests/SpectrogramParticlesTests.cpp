@@ -405,10 +405,10 @@ TEST(SpectrogramParticles, PointsBelowTheDisplayGateDrawNothingAndKeepTheReferen
     EXPECT_TRUE(builder.particles().empty());
     EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
 
-    // Quiet content just above the gate still auto-scales and draws.
-    builder.addFrame(std::array {point(1000.0F, 0.0F, levelFromDecibels(-85.0F))}, FRAME_SECONDS);
+    // Quiet content above the lowest reference still auto-scales and draws.
+    builder.addFrame(std::array {point(1000.0F, 0.0F, levelFromDecibels(-75.0F))}, FRAME_SECONDS);
     ASSERT_EQ(builder.particles().size(), 1U);
-    EXPECT_NEAR(builder.referenceLevel(), -85.0F, 1.0e-3F);
+    EXPECT_NEAR(builder.referenceLevel(), -75.0F, 1.0e-3F);
     EXPECT_FLOAT_EQ(builder.particles()[0].emphasis, 1.0F);
 }
 
@@ -454,7 +454,7 @@ TEST(SpectrogramParticles, ParticleColoursEvenOutTheLuminanceOfTheFrequencyColou
     const auto colourAt = [](const float frequency) {
         // The builder looks colours up in a table of 1024 evenly spaced shares, rounding the share down.
         constexpr double lastStep = 1023.0;
-        const double share = frequencyToShare(frequency, FrequencyScale::logarithmic);
+        const double share = frequencyToShare(static_cast<double>(frequency), FrequencyScale::logarithmic);
         return frequencyColour(static_cast<float>(std::floor(share * lastStep) / lastStep));
     };
     SpectrogramParticleBuilder builder;

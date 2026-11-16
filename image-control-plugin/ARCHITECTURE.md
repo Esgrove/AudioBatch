@@ -538,7 +538,9 @@ Content up to 24 dB below that range draws a dim haze, fading linearly in dB,
 so faint extremes such as sub-bass and air differ visibly from silence.
 The haze crossfades into the particle cores over the bottom quarter of the range,
 where the contrast curve keeps the cores dark.
-The reference rises immediately and falls at 12 dB per audio second, with a -90 dB lower bound.
+The reference rises immediately and falls at 12 dB per audio second, with a -80 dB lower bound.
+This bound is separate from the lower -90 dBFS display gate,
+so content between them draws dimly without scaling a quiet passage up to full brightness.
 Frames carry their tier identity and absolute audio endpoint.
 Simultaneous tier frames share a reference after all due peaks are observed,
 and each tier retains its latest peak between updates.
