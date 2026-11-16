@@ -95,6 +95,18 @@ Keep dependency-sensitive order and explain non-obvious requirements in a short 
   Wrap the definitions in the matching `namespace x { ... }` block or qualify the names.
 - Do not use namespace aliases. Qualify references with the original namespace path.
 
+## Name shadowing and Windows warnings
+
+- Do not shadow class members, including inherited members, with parameters, local variables, or range-for bindings.
+  Check base classes for collisions, including private members that MSVC can diagnose even when Clang does not.
+- In `juce::UnitTest` subclasses, avoid a local or parameter named `name`, which hides `juce::UnitTest::name`.
+  Use domain-specific names such as `presetName`, `fileName`, or `testName` instead.
+- Avoid hiding enclosing locals and parameters too.
+  Fix MSVC C4456, C4457, and C4458 by renaming the shadowing declaration and its uses,
+  not by suppressing warnings, weakening warnings as errors, or adding platform-specific naming branches.
+- A passing macOS build or clang-tidy run does not establish that MSVC's shadowing checks pass.
+  Validate affected code with Windows builds when available, and state when that validation was unavailable.
+
 ## File size and structure
 
 - Put each file in the `src/` subdirectory of its domain, as listed in the layout section of `AGENTS.md`.

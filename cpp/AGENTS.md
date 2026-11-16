@@ -329,6 +329,11 @@ Tests:
 - Keep every shared source and test compatible with Apple Clang and libc++ on macOS and MSVC and its STL on Windows.
   A macOS build or clang-tidy pass does not establish Windows compatibility.
   Consider both Debug and Release, since checked iterators and optimizer diagnostics differ between them.
+- Do not shadow class members, including inherited members, with parameters, local variables, or range-for bindings.
+  Check base classes when choosing names, including private members that MSVC can diagnose even when Clang does not.
+  In `juce::UnitTest` subclasses, use descriptive names such as `presetName`, `fileName`, or `testName` instead of `name`,
+  which hides `juce::UnitTest::name` and triggers MSVC C4458 with warnings as errors.
+  Rename the shadowing declaration instead of suppressing C4456, C4457, or C4458 or weakening warning policies.
 - Treat standard-library iterators as iterators, never as implementation-specific raw pointers.
   For example, `std::ranges::find` on `std::array` can return a raw pointer with libc++,
   but a checked iterator object with the MSVC STL, particularly in Debug builds.
