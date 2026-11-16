@@ -8,8 +8,10 @@
 
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include <string_view>
 
 #include <algorithm>
+#include <array>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -31,6 +33,14 @@ constexpr auto PRESET_NAME_ATTRIBUTE {"name"};
 constexpr auto PRESET_VERSION_ATTRIBUTE {"version"};
 /// Version of the preset file format, raised when a change would make older versions misread the file.
 constexpr int PRESET_FORMAT_VERSION {1};
+
+/// Device names that Windows reserves in every folder, whatever the extension,
+/// so a preset with one of these names could never be saved there.
+/// The Rust application refuses the same names, so presets of both stay portable.
+constexpr std::array<std::string_view, 22> RESERVED_NAMES {
+    "CON",  "PRN",  "AUX",  "NUL",  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+    "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+};
 
 /// Parses one stored slot, or returns an empty optional when its plugin description cannot be loaded.
 std::optional<SavedChainSlot> parseSlot(const juce::XmlElement& slotElement)
@@ -158,6 +168,16 @@ juce::String sanitizePresetName(const juce::String& name)
     return juce::File::createLegalFileName(name.trim()).trimCharactersAtStart(" .").trimCharactersAtEnd(" .");
 }
 
+/// Returns true when a sanitized preset name is a device name that Windows reserves,
+/// compared without case and ignoring anything after the first dot, as Windows does.
+bool isReservedPresetName(const juce::String& name)
+{
+    const auto base = name.upToFirstOccurrenceOf(".", false, false).trimEnd();
+    return std::ranges::any_of(RESERVED_NAMES, [&base](const std::string_view reserved) {
+        return base.equalsIgnoreCase(juce::String(reserved.data(), reserved.size()));
+    });
+}
+
 /// Returns the file of the named preset in the folder, or an empty optional when the name has no usable characters.
 std::optional<juce::File> getPresetFile(const juce::File& directory, const juce::String& name)
 {
@@ -205,6 +225,7 @@ std::vector<ChainPresetInfo> listPresets(const juce::File& directory)
 
 /// Saves the slots as the named preset in the folder, creating the folder when needed,
 /// and replaces a preset of the same name.
+/// A name that Windows reserves for a device is refused on every platform.
 /// Returns the preset file, or the reason it could not be written.
 std::expected<juce::File, juce::String> savePreset(
     const juce::File& directory,
@@ -215,6 +236,9 @@ std::expected<juce::File, juce::String> savePreset(
     const auto file = getPresetFile(directory, name);
     if (!file.has_value()) {
         return std::unexpected(juce::String("Enter a preset name"));
+    }
+    if (const auto fileName = file->getFileNameWithoutExtension(); isReservedPresetName(fileName)) {
+        return std::unexpected(utils::format("{} is reserved by Windows, enter another preset name", fileName));
     }
 
     if (const auto result = directory.createDirectory(); result.failed()) {

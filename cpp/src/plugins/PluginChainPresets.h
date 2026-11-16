@@ -64,5 +64,6 @@ constexpr auto PRESET_FOLDER_NAME {"Chain Presets"};
 [[nodiscard]] std::vector<ChainPresetInfo> listPresets(const juce::File& directory);
 
 [[nodiscard]] bool deletePreset(const juce::File& file);
+[[nodiscard]] bool isReservedPresetName(const juce::String& name);
 }  // namespace plugin_presets
 }  // namespace audiobatch

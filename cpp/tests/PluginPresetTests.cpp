@@ -573,6 +573,27 @@ void PluginPresetTests::testPresetFiles()
         );
     }
 
+    beginTest("Windows reserved names are refused on every platform");
+    {
+        for (const auto* name : {"CON", "con", "Nul", "aux.txt", "COM1", "lpt9 ", "PRN.backup"}) {
+            expect(plugin_presets::isReservedPresetName(name), name);
+        }
+        for (const auto* name : {"CONSOLE", "Mastering", "COM10", "LPT0", "NULL", "my con"}) {
+            expect(!plugin_presets::isReservedPresetName(name), name);
+        }
+
+        const TemporaryDirectory temporary;
+        const auto directory = temporary.getChildFile("Chain Presets");
+        const std::vector<SavedChainSlot> slots {makeUnavailableSlot("Gain", "one", true)};
+        const auto refused = plugin_presets::savePreset(directory, " nul. ", slots);
+        expect(!refused.has_value());
+        if (!refused.has_value()) {
+            expectEquals(refused.error(), juce::String("nul is reserved by Windows, enter another preset name"));
+        }
+        expect(!directory.exists());
+        expect(plugin_presets::savePreset(directory, "Console", slots).has_value());
+    }
+
     beginTest("Presets are saved, listed by name, replaced, loaded, and deleted");
     {
         const TemporaryDirectory temporary;

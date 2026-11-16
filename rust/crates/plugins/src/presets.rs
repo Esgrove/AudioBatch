@@ -28,12 +28,26 @@ const ILLEGAL_NAME_CHARACTERS: &[char] = &['"', '#', '@', ',', ';', ':', '<', '>
 /// Longest preset name in characters, which keeps the file name within every platform's limit.
 const MAXIMUM_NAME_CHARACTERS: usize = 128;
 
+/// Device names that Windows reserves in every folder, whatever the extension,
+/// so a preset with one of these names could never be saved there.
+/// The C++ application refuses the same names, so presets of both stay portable.
+const RESERVED_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2",
+    "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
 /// Failures while naming, finding, or persisting a chain preset.
 #[derive(Debug, thiserror::Error)]
 pub enum PresetError {
     /// No usable name was supplied.
     #[error("Enter a preset name")]
     EmptyName,
+    /// The name is a device name that Windows reserves.
+    #[error("{name} is reserved by Windows, enter another preset name")]
+    ReservedName {
+        /// The sanitized name that was refused.
+        name: String,
+    },
     /// The preset folder could not be enumerated.
     #[error("Could not read the preset folder {}", path.display())]
     List {
@@ -209,12 +223,17 @@ impl PresetStore {
     ///
     /// # Errors
     ///
-    /// Returns an error when the name has no usable characters, or the folder or the file cannot be written.
+    /// Returns an error when the name has no usable characters or is reserved by Windows,
+    /// or the folder or the file cannot be written.
     pub fn save(&self, name: &str, chain: &PluginChain) -> Result<PathBuf, PresetError> {
         let Some(path) = self.path_for(name) else {
             return Err(PresetError::EmptyName);
         };
-        let preset = ChainPreset::new(sanitize_preset_name(name), chain);
+        let name = sanitize_preset_name(name);
+        if is_reserved_preset_name(&name) {
+            return Err(PresetError::ReservedName { name });
+        }
+        let preset = ChainPreset::new(name, chain);
         write_atomically(&path, serde_json::to_string_pretty(&preset)?.as_bytes()).map_err(|source| {
             PresetError::Save {
                 path: path.clone(),
@@ -278,6 +297,16 @@ pub fn sanitize_preset_name(name: &str) -> String {
     legal
         .trim_matches(|character: char| character == '.' || character.is_whitespace())
         .to_owned()
+}
+
+/// Returns true when a sanitized preset name is a device name that Windows reserves,
+/// compared without case and ignoring anything after the first dot, as Windows does.
+#[must_use]
+pub fn is_reserved_preset_name(name: &str) -> bool {
+    let base = name.split('.').next().unwrap_or_default().trim_end();
+    RESERVED_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(base))
 }
 
 /// Reads a preset file.
@@ -457,6 +486,29 @@ mod test_presets {
         let presets = PresetStore::new(PathBuf::from("/presets"));
         assert_eq!(presets.path_for("  "), None);
         assert_eq!(presets.path_for("Master"), Some(PathBuf::from("/presets/Master.json")));
+    }
+
+    #[test]
+    fn windows_reserved_names_are_refused_on_every_platform() {
+        for name in ["CON", "con", "Nul", "aux.txt", "COM1", "lpt9 ", "PRN.backup"] {
+            assert!(is_reserved_preset_name(name), "{name}");
+        }
+        for name in ["CONSOLE", "Mastering", "COM10", "LPT0", "NULL", "my con"] {
+            assert!(!is_reserved_preset_name(name), "{name}");
+        }
+        let directory = TempDir::new().expect("temp dir");
+        let presets = store(&directory);
+        let chain = PluginChain {
+            slots: vec![slot("Gain", &[], true)],
+        };
+        let error = presets.save(" nul. ", &chain).expect_err("reserved");
+        assert!(matches!(&error, PresetError::ReservedName { name } if name == "nul"));
+        assert_eq!(
+            error.to_string(),
+            "nul is reserved by Windows, enter another preset name"
+        );
+        assert!(!presets.folder().exists());
+        assert!(presets.save("Console", &chain).is_ok());
     }
 
     #[test]
