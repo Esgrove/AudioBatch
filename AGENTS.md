@@ -175,6 +175,10 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and basic file checks through [prek](https://prek.j178.dev).
 - CI builds, tests, lints, format-checks, sanitizes, fuzzes, and measures coverage of the applications and plugins.
   It runs no benchmarks and no tests of the scripts themselves.
+  Each project workflow uses one macOS and one Windows suite, with Debug, Release, and audits as sequential steps.
+  Its platform matrix admits one runner at a time to limit public-runner concurrency.
+  Formatting and independent fixture checks share one runner, while parity keeps its own runner.
+  New commits cancel superseded runs of the same workflow and branch.
   `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust application.
   Their path filters include their own project, fixtures, the test plugin, assets, shared shell helpers,
   the root `tests/` scripts, and their workflow files, and exclude Markdown-only changes.
@@ -185,12 +189,13 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `cpp.yml` builds and tests Debug and Release on macOS and Windows,
   and runs coverage, clang-tidy, the sanitizers, RealtimeSanitizer, and fuzzing.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.
-  Its `miri`, `fuzz`, and `realtime` jobs run `rust/miri.sh`, `rust/fuzz.sh`, and `rust/rtsan.sh` on macOS with nightly Rust.
-  The realtime job requires clean first-party callbacks with `--skip-native`,
-  then verifies known blockers with `--diagnostic`.
-  A separate non-blocking job fuzzes the decoder for diagnostics.
+  Its macOS suite runs `rust/miri.sh`, `rust/fuzz.sh`, and `rust/rtsan.sh` with nightly Rust,
+  alongside stable-toolchain tests and coverage.
+  The realtime steps require clean first-party callbacks with `--skip-native`,
+  then verify known blockers with `--diagnostic`.
+  Explicitly non-blocking decoder mutation steps retain their outcomes, summaries, and diagnostic artifacts.
   Its path filters also include the C++ fuzz corpus that the Rust fuzz job replays.
-  Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
+  Its Windows suite downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.
   It also runs the shared-cache tests in both directions.

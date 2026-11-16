@@ -44,10 +44,10 @@ on:
       - "tests/**"
       - "!**/*.md"
 
-# Cancel previous runs for PRs but not pushes to main
+# Superseded runs on the same branch or PR release their runners.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -71,9 +71,14 @@ jobs:
     strategy:
       matrix:
         os: [macos-latest, windows-2025-vs2026]
+      max-parallel: 1
       fail-fast: false
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
     env:
+      # Installing nightly must not change the toolchain of application checks or coverage.
+      RUSTUP_TOOLCHAIN: stable
+      AUDIOBATCH_RTSAN_TOOLCHAIN: nightly
       AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES: ${{ startsWith(matrix.os, 'windows-') && '1' || '0' }}
     steps:
       # The Rust port does not use JUCE, but the test VST3 in test-plugin/ is built with it.
@@ -104,103 +109,61 @@ jobs:
         id: juce
         run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache test plugin build
-        uses: actions/cache@v6
+      - name: Restore test plugin build
+        id: test-plugin-cache
+        uses: actions/cache/restore@v6
         with:
           path: test-plugin/cmake-build-release
           key: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-${{ hashFiles('test-plugin/CMakeLists.txt', 'test-plugin/src/**') }}
           restore-keys: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-
 
-      # The tests find the bundle in test-plugin/cmake-build-release, and fail instead of skipping when CI is set and it is missing.
-      - name: Build test plugin
-        working-directory: test-plugin
-        run: ./build.sh
-
-      - name: Set up Rust toolchain
+      - name: Set up stable Rust toolchain
+        if: ${{ !cancelled() }}
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy,rustfmt
+          components: clippy,rustfmt,llvm-tools-preview
 
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
+      - name: Install Rust CI tools
+        id: ci-tools
+        if: ${{ !cancelled() }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: ${{ runner.os == 'macOS' && 'nextest,cargo-llvm-cov,cargo-fuzz' || 'nextest' }}
 
-      - name: Cache dependencies
+      # Resolve the ordinary dependency cache before installing nightly, so daily audit updates do not evict it.
+      - name: Cache Rust dependencies
+        if: ${{ !cancelled() }}
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> rust/target"
+          # Keep caches warm even when strict Miri reports its known dependency blocker.
+          cache-on-failure: true
+          # Tools are installed once above, never restored over those selected versions.
+          cache-bin: false
+
+      - name: Set up nightly Rust with Miri
+        id: nightly
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri,rust-src
 
       - name: Set up uv
+        if: ${{ !cancelled() }}
         uses: astral-sh/setup-uv@v10.3.3
 
-      - name: Check formatting
-        if: runner.os == 'macOS'
-        run: ./format.sh --check
-
-      - name: Lint
-        run: ./lint.sh --check --application-only
-
-      # The fuzz crate is its own workspace, and its targets build on stable outside cargo-fuzz.
-      - name: Lint fuzz targets
-        if: runner.os == 'macOS'
-        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
-
-      # The snapshot feature is off in normal builds, so it needs its own compile check.
-      - name: Build GUI with the snapshot feature
-        if: runner.os == 'macOS'
-        run: cargo build -p audiobatch-gui --features snapshot
-
-      # Includes shared fixture checksums, generated input identities, and exact platform goldens.
-      # Nextest builds the test targets, avoiding a separate all-targets build.
-      - name: Run unit and service tests
-        run: ./test.sh --unit
-
-      - name: Driven GUI integration workflows
-        timeout-minutes: 5
-        run: ./test.sh --gui-integration
-
-      # Each backend must preserve its platform baseline in optimized builds too.
-      - name: Run optimized core and Windows CLI tests
-        run: ./test.sh --optimized
-
-      - name: CLI integration contracts
-        timeout-minutes: 5
-        run: ./test.sh --cli-integration
-
-      - name: Upload integration failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: rust-integration-${{ runner.os }}
-          path: rust/target/integration-artifacts
-          if-no-files-found: ignore
-
-  realtime:
-    name: RealtimeSanitizer
-    runs-on: macos-latest
-    timeout-minutes: 45
-    env:
-      AUDIOBATCH_RTSAN_TOOLCHAIN: nightly
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          submodules: true
-
       - name: Install Homebrew LLVM and native build tools
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         run: |
           mkdir -p target/rtsan/artifacts
           brew install llvm ninja jq ripgrep 2>&1 | tee target/rtsan/artifacts/dependencies.log
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
-
-      - name: Set up nightly Rust
-        uses: dtolnay/rust-toolchain@nightly
-
       # Keep the resolved nightly identity even if its LLVM does not match Homebrew's runtime.
       # rtsan.sh must fail on an LLVM major.minor mismatch or an unusable startup runtime, never skip the check.
       - name: Record native sanitizer toolchain
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         run: |
+          mkdir -p target/rtsan/artifacts
           {
             uname -sm
             rustup show active-toolchain
@@ -212,213 +175,147 @@ jobs:
             uv --version
           } 2>&1 | tee target/rtsan/artifacts/toolchain.log
 
-      # Build only into the fixture tree, never install a plugin or open a physical audio device.
-      - name: Build native test plugin
+      # Tests, coverage, and RTSan share this build-tree bundle, never an installed plugin or physical audio device.
+      # Preserve its build log alongside RTSan's dependency and toolchain evidence.
+      - name: Build test plugin
+        id: test-plugin-build
+        if: ${{ !cancelled() }}
         working-directory: test-plugin
-        run: ./build.sh 2>&1 | tee "$GITHUB_WORKSPACE/rust/target/rtsan/artifacts/native-plugin-build.log"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/rust/target/rtsan/artifacts"
+          ./build.sh 2>&1 | tee "$GITHUB_WORKSPACE/rust/target/rtsan/artifacts/native-plugin-build.log"
 
-      # First-party audio data callbacks must pass strictly, independently of native/error-ownership audits.
-      - name: Require clean first-party audio callbacks
-        run: ./rtsan.sh --skip-native --artifacts target/rtsan/artifacts/first-party 2>&1 | tee target/rtsan/artifacts/first-party.log
+      - name: Save test plugin build before independent audits
+        if: ${{ !cancelled() && steps.test-plugin-build.outcome == 'success' && steps.test-plugin-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: test-plugin/cmake-build-release
+          key: ${{ steps.test-plugin-cache.outputs.cache-primary-key }}
 
-      # --diagnostic verifies specific native dependency reports as BLOCKED, never clean callback passes.
-      - name: Check callbacks and verify known blockers
-        run: ./rtsan.sh --diagnostic 2>&1 | tee target/rtsan/artifacts/run.log
+      - name: Check formatting
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: ./format.sh --check
 
-      - name: Upload realtime sanitizer diagnostics
-        if: always()
+      - name: Lint
+        if: ${{ !cancelled() }}
+        run: ./lint.sh --check --application-only
+
+      # The fuzz crate is its own workspace, and its targets build on stable outside cargo-fuzz.
+      - name: Lint fuzz targets
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
+
+      # The snapshot feature is off in normal builds, so it needs its own compile check.
+      - name: Build GUI with the snapshot feature
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: cargo build -p audiobatch-gui --features snapshot
+
+      # Includes shared fixture checksums, generated input identities, and exact platform goldens.
+      # Nextest builds the test targets, avoiding a separate all-targets build.
+      - name: Run unit and service tests
+        if: ${{ !cancelled() }}
+        run: ./test.sh --unit
+
+      - name: Driven GUI integration workflows
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: ./test.sh --gui-integration
+
+      # Each backend must preserve its platform baseline in optimized builds too.
+      - name: Run optimized core and Windows CLI tests
+        if: ${{ !cancelled() }}
+        run: ./test.sh --optimized
+
+      - name: CLI integration contracts
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: ./test.sh --cli-integration
+
+      - name: Upload integration failure diagnostics
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: rust-realtime-sanitizer
-          path: rust/target/rtsan/artifacts
-          if-no-files-found: error
+          name: rust-integration-${{ runner.os }}
+          path: rust/target/integration-artifacts
+          if-no-files-found: ignore
 
-  miri:
-    # Checks the unsafe VST3 and CLAP hosts, shared host core, test plugins, Serato parsers,
-    # and the cache blob readers for undefined behaviour.
-    # Needs no JUCE or test plugin bundle, since Miri cannot load native libraries.
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up nightly Rust with Miri
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri,rust-src
-
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> rust/target"
-          key: miri
-
+      # Required phases run independently of earlier failures, including known strict Miri blockers.
+      # Miri checks the unsafe VST3/CLAP hosts, shared host core, test plugins, parsers, and cache blob readers.
       - name: Run tests under Miri
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 30
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/audiobatch-miri-target
         run: ./miri.sh
 
-  fuzz:
-    # Required checks include every corpus and checked decoder regression, but only parser/cache mutations.
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+      - name: Release Miri build storage
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: rm -rf "$RUNNER_TEMP/audiobatch-miri-target"
 
-      - name: Set up nightly Rust
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Install cargo-fuzz
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-fuzz
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust/fuzz
-
+      # Keep nightly explicit, matching the fuzz harness toolchain rather than the stable job default.
       - name: Check exact decoder panic regressions with overflow checks
-        run: cargo test --manifest-path fuzz/Cargo.toml --target-dir fuzz/target --test decoder_regressions
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: cargo +nightly test --manifest-path fuzz/Cargo.toml --target-dir fuzz/target --test decoder_regressions
 
       - name: Build fuzz targets
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         run: ./fuzz.sh --build-only
 
       - name: Replay every corpus including decoder regressions
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         run: ./fuzz.sh --no-build --replay
 
       # New inputs go to a scratch corpus, so the committed corpus stays as it is.
       - name: Fuzz Serato, CLI arguments, and cache blobs (required)
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         run: ./fuzz.sh --no-build --fuzz --targets parsers --seconds 60
 
       - name: Upload crashing inputs
-        if: failure()
+        if: ${{ always() && runner.os == 'macOS' }}
         uses: actions/upload-artifact@v7
         with:
           name: rust-fuzz-artifacts
           path: rust/fuzz/artifacts
           if-no-files-found: ignore
 
-  decoder-fuzz-diagnostics:
-    name: Decoder mutation fuzz (non-blocking diagnostics)
-    # Known Symphonia arithmetic defects remain visible without blocking the required fuzz and Miri jobs.
-    continue-on-error: true
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+      # First-party audio data callbacks must pass strictly, independently of native/error-ownership audits.
+      - name: Require clean first-party audio callbacks
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: ./rtsan.sh --skip-native --artifacts target/rtsan/artifacts/first-party 2>&1 | tee target/rtsan/artifacts/first-party.log
 
-      - name: Set up nightly Rust
-        uses: dtolnay/rust-toolchain@nightly
+      # --diagnostic verifies specific native dependency reports as BLOCKED, never clean callback passes.
+      - name: Check callbacks and verify known blockers
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: ./rtsan.sh --diagnostic 2>&1 | tee target/rtsan/artifacts/run.log
 
-      - name: Install cargo-fuzz
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-fuzz
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust/fuzz
-          key: decoder-diagnostics
-
-      - name: Build decoder diagnostic target
-        run: ./fuzz.sh --build-only --targets decoder
-
-      # Bash pipefail preserves the fuzzer's real failure through tee. Do not continue at step level.
-      - name: Mutate decoder inputs (diagnostic, failures remain visible)
-        id: decoder-mutations
-        run: |
-          mkdir -p fuzz/artifacts
-          ./fuzz.sh --no-build --fuzz --targets decoder --seconds 60 2>&1 | tee fuzz/artifacts/decoder-mutations.log
-
-      - name: Report decoder diagnostic outcome
-        if: always()
-        working-directory: .
-        env:
-          MUTATION_OUTCOME: ${{ steps.decoder-mutations.outcome }}
-          DIAGNOSTIC_STATUS: ${{ job.status }}
-        run: |
-          {
-            printf '## Decoder mutation fuzz, non-blocking diagnostics\n\n'
-            printf 'Job status before reporting: %s. Mutation step outcome: %s.\n\n' "$DIAGNOSTIC_STATUS" "$MUTATION_OUTCOME"
-            printf 'Known Symphonia 0.6.1 WAV arithmetic defects remain unfixed.\n'
-            printf 'A failed or incomplete campaign is not a clean fuzz result. See the failed step and diagnostic artifacts.\n'
-            printf 'Checked decoder regressions, every corpus replay, parser/cache mutations, and Miri remain required.\n'
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$DIAGNOSTIC_STATUS" != success ] || [ "$MUTATION_OUTCOME" != success ]; then
-            printf '::warning::Decoder diagnostics failed or did not complete. Review logs and artifacts, not a clean fuzz result.\n'
-          fi
-
-      - name: Upload decoder diagnostic logs and crashing inputs
-        if: always()
+      - name: Upload realtime sanitizer diagnostics
+        if: ${{ always() && runner.os == 'macOS' }}
         uses: actions/upload-artifact@v7
         with:
-          name: rust-decoder-fuzz-diagnostics
-          path: rust/fuzz/artifacts
-          if-no-files-found: warn
+          name: rust-realtime-sanitizer
+          path: rust/target/rtsan/artifacts
+          if-no-files-found: error
 
-  coverage:
-    runs-on: macos-latest
-    steps:
-      # Checks out JUCE and builds the test VST3 like the build job.
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          submodules: true
-
-      - name: Get JUCE commit
-        id: juce
-        run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache test plugin build
-        uses: actions/cache@v6
-        with:
-          path: test-plugin/cmake-build-release
-          key: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-${{ hashFiles('test-plugin/CMakeLists.txt', 'test-plugin/src/**') }}
-          restore-keys: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-
-
-      # The tests find the bundle in test-plugin/cmake-build-release, and fail instead of skipping when CI is set and it is missing.
-      - name: Build test plugin
-        working-directory: test-plugin
-        run: ./build.sh
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Install cargo-llvm-cov and nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov,nextest
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> rust/target"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+      - name: Release realtime sanitizer build storage after uploading evidence
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: rm -rf target/rtsan
 
       # Coverage invokes nextest directly, so build its test-only CLAP module explicitly.
       - name: Build CLAP test module
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         run: CARGO_TARGET_DIR=target/llvm-cov-target cargo build -p audiobatch-test-clap-plugin --example clap_module
 
       - name: Run tests and CLI subprocesses with coverage
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         timeout-minutes: 30
         run: ./coverage.sh --lcov
 
       - name: Write coverage reports
-        if: always()
+        if: ${{ always() && runner.os == 'macOS' }}
         run: ./coverage.sh --report-only
 
       - name: Upload coverage reports
-        if: always()
+        if: ${{ always() && runner.os == 'macOS' }}
         uses: actions/upload-artifact@v7
         with:
           name: rust-coverage
@@ -427,3 +324,57 @@ jobs:
             rust/target/llvm-cov/html
             rust/target/integration-artifacts
           if-no-files-found: error
+
+      - name: Release instrumented coverage build storage
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: rm -rf target/llvm-cov-target
+
+      # Known Symphonia arithmetic defects remain visible without making any required check optional.
+      - name: Build decoder diagnostic target
+        id: decoder-build
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          mkdir -p fuzz/artifacts
+          ./fuzz.sh --build-only --targets decoder 2>&1 | tee fuzz/artifacts/decoder-build.log
+
+      # Bash pipefail preserves the fuzzer's real outcome through tee, even with step-level diagnostics.
+      - name: Mutate decoder inputs (diagnostic, failures remain visible)
+        id: decoder-mutations
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.decoder-build.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          mkdir -p fuzz/artifacts
+          ./fuzz.sh --no-build --fuzz --targets decoder --seconds 60 2>&1 | tee fuzz/artifacts/decoder-mutations.log
+
+      - name: Report decoder diagnostic outcome
+        if: ${{ always() && runner.os == 'macOS' }}
+        env:
+          NIGHTLY_OUTCOME: ${{ steps.nightly.outcome }}
+          TOOLS_OUTCOME: ${{ steps.ci-tools.outcome }}
+          BUILD_OUTCOME: ${{ steps.decoder-build.outcome }}
+          MUTATION_OUTCOME: ${{ steps.decoder-mutations.outcome }}
+        run: |
+          mkdir -p fuzz/artifacts
+          {
+            printf '## Decoder mutation fuzz, non-blocking diagnostics\n\n'
+            printf 'Nightly setup: %s. CI tool setup: %s. Decoder build: %s. Mutation campaign: %s.\n\n' \
+              "$NIGHTLY_OUTCOME" "$TOOLS_OUTCOME" "$BUILD_OUTCOME" "$MUTATION_OUTCOME"
+            printf 'Known Symphonia 0.6.1 WAV arithmetic defects remain unfixed.\n'
+            printf 'A failed or incomplete campaign is not a clean fuzz result. See the step outcomes and diagnostic artifacts.\n'
+            printf 'Checked decoder regressions, every corpus replay, parser/cache mutations, and Miri remain required.\n'
+          } | tee fuzz/artifacts/decoder-diagnostic-outcome.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "$NIGHTLY_OUTCOME" != success ] || [ "$TOOLS_OUTCOME" != success ] || \
+             [ "$BUILD_OUTCOME" != success ] || [ "$MUTATION_OUTCOME" != success ]; then
+            printf '::warning::Decoder diagnostics failed or did not complete. Review logs and artifacts, not a clean fuzz result.\n'
+          fi
+
+      - name: Upload decoder diagnostic logs and crashing inputs
+        if: ${{ always() && runner.os == 'macOS' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-decoder-fuzz-diagnostics
+          path: rust/fuzz/artifacts
+          if-no-files-found: warn

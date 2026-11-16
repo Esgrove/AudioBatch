@@ -6,10 +6,10 @@ on:
       - main
   pull_request:
 
-# Cancel previous runs for PRs but not pushes to main
+# Only the newest revision of a branch needs runner time.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -20,19 +20,18 @@ defaults:
 
 jobs:
   format:
-    # Runs the root format.sh, which checks both projects with their own format scripts,
-    # the root shell scripts with shfmt, and the Python scripts with ruff.
-    # Needs macOS, since Ubuntu apt has an old clang-format version.
+    name: Formatting and independent fixtures
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      # The C++ format script checks CMake files with cmake-format, which it runs through uvx.
-      - name: Install formatters
+      # One runner owns formatting and independent expectations, without competing checkouts or setup.
+      - name: Install formatters and fixture tools
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install clang-format shfmt uv
+        run: brew install clang-format shfmt jq uv
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -40,35 +39,28 @@ jobs:
           components: rustfmt
 
       - name: Check formatting
+        if: ${{ !cancelled() }}
         run: |
           clang-format --version
           ./format.sh --check
 
-  plugin-expected:
-    # The expected outputs of the test plugin must be what fixtures/plugin_expected.py writes,
-    # so a changed script cannot leave stale files behind for the C++ and Rust tests.
-    runs-on: macos-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
-
-      # The folder is emptied first, so a file the script no longer writes shows up as deleted.
-      - name: Regenerate the expected outputs
+      # Regeneration stays inside this disposable checkout, never a developer's fixture tree.
+      - name: Regenerate the expected plugin outputs
+        if: ${{ !cancelled() }}
         run: |
           rm -rf fixtures/plugin_expected
           uv run fixtures/plugin_expected.py
 
-      # The script formats its JSON with jq, as format.sh does, so both checks accept the same bytes.
-      - name: Check independent spectrogram fixtures
-        run: |
-          jq --version
-          uv run --script fixtures/spectrogram_expected.py --check
-          uv run --script fixtures/metrics_expected.py --check
-
-      - name: Check for differences
+      - name: Check plugin output differences
+        if: ${{ !cancelled() }}
         run: |
           git status --porcelain fixtures/plugin_expected
           test -z "$(git status --porcelain fixtures/plugin_expected)"
+
+      - name: Check independent spectrogram fixtures
+        if: ${{ !cancelled() }}
+        run: uv run --script fixtures/spectrogram_expected.py --check
+
+      - name: Check independent source metrics
+        if: ${{ !cancelled() }}
+        run: uv run --script fixtures/metrics_expected.py --check

@@ -26,10 +26,10 @@ on:
       - "tests/**"
       - "!**/*.md"
 
-# Cancel previous runs for PRs but not pushes to main
+# Superseded runs on the same PR or branch release their runner immediately.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -41,100 +41,144 @@ defaults:
 
 jobs:
   build:
-    # Release builds compile out the JUCE assertions and turn on the optimizer,
-    # so they catch warnings and behaviour that only show up there.
     strategy:
       matrix:
         os: [macos-latest, windows-2025-vs2026]
-        build-type: [Debug, Release]
+      max-parallel: 1
       fail-fast: false
-    name: build (${{ matrix.os }}, ${{ matrix.build-type }})
+    name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    env:
-      BUILD_TYPE: ${{ matrix.build-type }}
+    timeout-minutes: 300
     steps:
       - name: Check out repository
+        id: checkout
         uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - name: Install ccache
-        if: runner.os == 'macOS'
+      # Create the diagnostics directory before installing tools so failures retain their evidence.
+      # Skip Homebrew's automatic update and reuse these dependencies across every macOS phase.
+      - name: Install LLVM, Ninja, and ccache
+        id: native-dependencies
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.checkout.outcome == 'success' }}
+        timeout-minutes: 15
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install ccache
+        run: |
+          mkdir -p cmake-build-mac-rtsan/realtime-artifacts
+          brew install llvm ninja ccache 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/dependencies.log
+
+      - name: Set up uv
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: astral-sh/setup-uv@v10.3.3
 
       - name: Get JUCE commit
         id: juce
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        timeout-minutes: 1
         run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
 
-      # The ccache cache lives inside the build directory (build.sh sets CCACHE_DIR),
-      # so caching the build directories also caches the compilation cache.
-      # The key changes with the build configuration and JUCE, not with every commit,
-      # so the cache is saved once per configuration instead of once per commit.
-      # The lint and parity jobs restore this cache, and a cache only restores with the same path list it was saved with.
-      - name: Cache CMake build directory and ccache
-        uses: actions/cache@v6
+      # One archive owns both profiles and their embedded ccache directories.
+      # Parity restores the same key and path list without saving a duplicate archive.
+      - name: Restore CMake build directories and ccache
+        id: cmake-cache
+        if: ${{ !cancelled() && steps.juce.outcome == 'success' }}
+        uses: actions/cache/restore@v6
         with:
           path: |
             cpp/cmake-build-mac-debug
             cpp/cmake-build-mac-release
             cpp/cmake-build-windows-debug
             cpp/cmake-build-windows-release
-          key: ${{ runner.os }}-${{ matrix.build-type }}-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.build-type }}-cmake-
+          key: ${{ runner.os }}-suite-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-suite-cmake-
 
-      - name: Build
-        run: ./build.sh --build-type "$BUILD_TYPE"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
-
-      - name: Build tests and run unit suites
+      # Independent checks run after earlier failures without making any required check non-blocking.
+      - name: Build Debug GUI and CLI
+        id: debug-build
+        if: ${{ !cancelled() }}
         timeout-minutes: 30
-        run: |
-          ./test.sh --build-type "$BUILD_TYPE" --build-only
-          ./test.sh --build-type "$BUILD_TYPE" --unit --no-build
+        run: ./build.sh --build-type Debug
+
+      - name: Build Debug tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        run: ./test.sh --build-type Debug --build-only
+
+      - name: Run Debug unit suites
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: ./test.sh --build-type Debug --unit --no-build
 
       # The GUI workflows drive a transparent desktop window through its peer,
-      # which the macOS and Windows runners provide through their logged-in desktop sessions.
-      - name: CLI contracts and driven GUI integration
+      # using the macOS and Windows runners' logged-in desktop sessions.
+      - name: Debug CLI contracts and driven GUI integration
+        if: ${{ !cancelled() }}
         timeout-minutes: 5
-        run: ./test.sh --build-type "$BUILD_TYPE" --integration --no-build
+        run: ./test.sh --build-type Debug --integration --no-build
 
-      # CTest's integration label includes the shared executable CLI contracts and the driven GUI workflows.
-      - name: Upload integration failure diagnostics
-        if: failure()
+      # CTest's integration label includes the shared executable CLI contracts and driven GUI workflows.
+      - name: Upload Debug integration diagnostics
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: cpp-integration-${{ runner.os }}-${{ matrix.build-type }}
+          name: cpp-integration-${{ runner.os }}-Debug
           path: |
-            cpp/cmake-build-*/integration-artifacts
-            cpp/cmake-build-*/Testing/Temporary/LastTest.log
+            cpp/cmake-build-*-debug/integration-artifacts
+            cpp/cmake-build-*-debug/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
 
-  coverage:
-    runs-on: macos-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+      # Release compiles out JUCE assertions and enables optimizer-only warnings and behaviour.
+      - name: Build Release GUI and CLI
+        id: release-build
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        run: ./build.sh --build-type Release
+
+      - name: Build Release tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        run: ./test.sh --build-type Release --build-only
+
+      - name: Run Release unit suites
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: ./test.sh --build-type Release --unit --no-build
+
+      - name: Release CLI contracts and driven GUI integration
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: ./test.sh --build-type Release --integration --no-build
+
+      - name: Upload Release integration diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
         with:
-          submodules: recursive
+          name: cpp-integration-${{ runner.os }}-Release
+          path: |
+            cpp/cmake-build-*-release/integration-artifacts
+            cpp/cmake-build-*-release/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
 
-      - name: Install Ninja and ccache
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install ninja ccache
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+      # Save ordinary build state before audits, which can legitimately report required failures.
+      - name: Save shared CMake build cache
+        if: ${{ !cancelled() && steps.debug-build.outcome == 'success' && steps.release-build.outcome == 'success' && steps.cmake-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            cpp/cmake-build-mac-debug
+            cpp/cmake-build-mac-release
+            cpp/cmake-build-windows-debug
+            cpp/cmake-build-windows-release
+          key: ${{ steps.cmake-cache.outputs.cache-primary-key }}
 
       - name: Unit, GUI, and CLI subprocess coverage
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         timeout-minutes: 30
         run: ./coverage.sh --lcov
 
       - name: Upload coverage and integration diagnostics
-        if: always()
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         uses: actions/upload-artifact@v7
         with:
           name: cpp-coverage
@@ -144,106 +188,66 @@ jobs:
             cpp/cmake-build-mac-coverage/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
 
-  lint:
-    # Use macOS with the latest LLVM from Homebrew, since Ubuntu apt has an older clang-tidy
-    runs-on: macos-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          submodules: recursive
-
-      # Skip the automatic `brew update`, which takes minutes and is not needed for the runner image's formulae.
-      # The restored build directory was configured with ccache as the compiler launcher, so ccache must exist.
-      - name: Install LLVM, Ninja, and ccache
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install llvm ninja ccache
-
-      - name: Get JUCE commit
-        id: juce
-        run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
-
-      # Restores a macOS Debug cache saved by the build job of an earlier run,
-      # since this job runs alongside the build job of the same run.
-      # It holds the same cmake-build-mac-debug directory, including the fetched dependencies.
-      # The path list must match the build job's for the cache to restore.
-      # Restore-only, since the build job owns saving it.
-      - name: Restore CMake build directory
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            cpp/cmake-build-mac-debug
-            cpp/cmake-build-mac-release
-            cpp/cmake-build-windows-debug
-            cpp/cmake-build-windows-release
-          key: ${{ runner.os }}-Debug-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
-          restore-keys: ${{ runner.os }}-Debug-cmake-
-
       # --prepare refreshes the compile database and generated headers without compiling the applications.
-      # lint.sh selects Homebrew clang-tidy while CMake retains the build job's Apple toolchain.
-      - name: Prepare workspace and run clang-tidy
+      # lint.sh selects Homebrew clang-tidy while CMake retains the build's Apple toolchain.
+      - name: Prepare Debug workspace and run clang-tidy
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 45
         run: ./lint.sh --prepare --build-type Debug --check
 
-  sanitize:
-    # Runs the unit tests on macOS under AddressSanitizer and UndefinedBehaviorSanitizer,
-    # and under ThreadSanitizer, which cannot be combined with AddressSanitizer.
-    # On Windows, they run under the MSVC AddressSanitizer.
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            sanitizer: address
-          - os: macos-latest
-            sanitizer: thread
-          - os: windows-2025-vs2026
-            sanitizer: address
-      fail-fast: false
-    name: sanitize (${{ matrix.os }}, ${{ matrix.sanitizer }})
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+      - name: Release ordinary and coverage build storage
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: rm -rf cmake-build-mac-debug cmake-build-mac-release cmake-build-mac-coverage
+
+      - name: Build and run macOS unit tests with ASan and UBSan
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 30
+        run: ./sanitize.sh
+
+      - name: Upload address sanitizer diagnostics
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        uses: actions/upload-artifact@v7
         with:
-          submodules: recursive
+          name: cpp-address-sanitizer
+          path: cpp/cmake-build-mac-asan/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
 
-      - name: Install Ninja
-        if: runner.os == 'macOS'
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install ninja
+      - name: Release address sanitizer build storage
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: rm -rf cmake-build-mac-asan
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+      # ThreadSanitizer uses its own workspace because it cannot be combined with AddressSanitizer.
+      - name: Build and run macOS unit tests with TSan
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 30
+        run: ./sanitize.sh --thread
 
-      - name: Build and run tests with sanitizers
-        run: |
-          if [ "${{ matrix.sanitizer }}" = "thread" ]; then
-            ./sanitize.sh --thread
-          else
-            ./sanitize.sh
-          fi
-
-  realtime:
-    name: RealtimeSanitizer
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
+      - name: Upload thread sanitizer diagnostics
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        uses: actions/upload-artifact@v7
         with:
-          submodules: recursive
+          name: cpp-thread-sanitizer
+          path: cpp/cmake-build-mac-tsan/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
 
-      - name: Install Homebrew LLVM and Ninja
-        run: |
-          mkdir -p cmake-build-mac-rtsan/realtime-artifacts
-          brew install llvm ninja 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/dependencies.log
+      - name: Release thread sanitizer build storage
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: rm -rf cmake-build-mac-tsan
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+      - name: Release ordinary Windows build storage after caching
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: rm -rf cmake-build-windows-debug cmake-build-windows-release
+
+      - name: Build and run Windows unit tests with MSVC ASan
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        timeout-minutes: 30
+        run: ./sanitize.sh
 
       - name: Record native sanitizer toolchain
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 2
         run: |
+          mkdir -p cmake-build-mac-rtsan/realtime-artifacts
           {
             uname -sm
             "$(brew --prefix llvm)/bin/clang++" --version
@@ -254,11 +258,14 @@ jobs:
 
       # The isolated executable links RTSan at startup and never opens a physical audio device.
       # Expected baseline findings remain BLOCKED in result.json, not clean callback passes.
-      - name: Check callbacks and verify known blockers
+      - name: Check callbacks and verify known blockers with RTSan
+        id: realtime
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 35
         run: ./sanitize.sh --realtime 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/run.log
 
       - name: Upload realtime sanitizer diagnostics
-        if: always()
+        if: ${{ !cancelled() && runner.os == 'macOS' && (steps.native-dependencies.outcome != 'skipped' || steps.realtime.outcome != 'skipped') }}
         uses: actions/upload-artifact@v7
         with:
           name: cpp-realtime-sanitizer
@@ -268,40 +275,35 @@ jobs:
             cpp/cmake-build-mac-rtsan/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: error
 
-  fuzz:
-    # Replays the committed corpus through each libFuzzer harness, then fuzzes each one briefly.
-    # The macos-fuzz preset uses Homebrew LLVM, since Apple Clang does not ship libFuzzer.
-    runs-on: macos-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          submodules: recursive
+      - name: Release realtime sanitizer build storage
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: rm -rf cmake-build-mac-rtsan
 
-      - name: Install LLVM and Ninja
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install llvm ninja
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
-
-      - name: Build harnesses
+      # The macos-fuzz preset uses Homebrew LLVM's libFuzzer runtime.
+      - name: Build fuzz harnesses
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 20
         run: ./fuzz.sh --build-only
 
-      # The harnesses are only in the compile database of the macos-fuzz preset, so the lint job skips them.
-      - name: Run clang-tidy on the harnesses
+      # The harnesses exist only in the macos-fuzz compile database.
+      - name: Run clang-tidy on the fuzz harnesses
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 15
         run: ./lint.sh --check --fuzz
 
-      - name: Replay corpus
+      - name: Replay committed fuzz corpus
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 5
         run: ./fuzz.sh --no-build --replay
 
-      # New inputs go to a scratch corpus, so the committed corpus stays as it is.
-      - name: Fuzz
+      # New inputs go to a scratch corpus, so the committed corpus remains unchanged.
+      - name: Fuzz each harness for 60 seconds
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        timeout-minutes: 5
         run: ./fuzz.sh --no-build --fuzz --seconds 60
 
       - name: Upload crashing inputs
-        if: failure()
+        if: ${{ !cancelled() && runner.os == 'macOS' && failure() }}
         uses: actions/upload-artifact@v7
         with:
           name: fuzz-artifacts

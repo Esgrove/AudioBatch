@@ -427,8 +427,8 @@ Raw `cargo nextest run` includes the GUI integration workflows but not the Pytho
 `./lint.sh` checks application packages and the fuzz crate with Clippy and `-D warnings`,
 and `./lint.sh --check` reports the warnings without applying fixes.
 `-a` or `--application-only` omits the separate fuzz crate when another check owns it.
-CI uses the lint and format scripts, with a separate macOS fuzz lint step,
-and runs the tests on macOS and Windows and coverage on macOS.
+CI uses one runner per platform, with the lint and format scripts and a separate macOS fuzz lint step.
+The platform matrix runs serially, and macOS adds coverage, Miri, fuzzing, and realtime checks as independent steps.
 
 Other commands:
 

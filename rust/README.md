@@ -616,8 +616,8 @@ cargo llvm-cov nextest --workspace
 cargo llvm-cov nextest --workspace --html --open
 ```
 
-The coverage job in CI runs on macOS, adds the summary to the workflow run,
-and uploads the HTML and LCOV reports as the `rust-coverage` artifact.
+The coverage steps in CI share the macOS verification runner, add the summary to the workflow run,
+and upload the HTML and LCOV reports as the `rust-coverage` artifact.
 
 ## Miri
 
@@ -637,7 +637,7 @@ Tests that need native bundles, the file system, SQLite, or audio devices, or th
 are marked with `#[cfg_attr(miri, ignore = "...")]`.
 The tests that start the process-lifetime test UI thread run with `-Zmiri-ignore-leaks`,
 which keeps the pointer and aliasing checks.
-The `miri` job in CI runs the same script on macOS.
+The Miri step in CI runs the same script on the shared macOS verification runner.
 
 ## RealtimeSanitizer
 
@@ -701,8 +701,8 @@ cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions
 ```
 
 Decoder mutation fuzzing keeps finding variants of the same overflows,
-so CI runs it in a separate non-blocking job that uploads its log and inputs as `rust-decoder-fuzz-diagnostics`.
-The required `fuzz` job runs the regression tests, replays every corpus, and fuzzes the parser targets,
+so CI runs it in non-blocking steps that upload their log and inputs as `rust-decoder-fuzz-diagnostics`.
+The required fuzz steps run the regression tests, replay every corpus, and fuzz the parser targets,
 uploading crashing inputs as `rust-fuzz-artifacts`.
 Preview decoding calls the decoder directly, so one of these files can end its decode thread.
 

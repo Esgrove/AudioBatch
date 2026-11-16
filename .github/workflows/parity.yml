@@ -32,10 +32,10 @@ on:
       - "rust/**"
       - "!**/*.md"
 
-# Cancel previous runs for PRs but not pushes to main
+# Only the newest revision of a branch needs runner time.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -55,6 +55,7 @@ jobs:
     # Runs the C++ and the Rust CLI on the committed fixtures and compares the levels they report,
     # then normalizes the LFS collection with both and compares the output files.
     runs-on: macos-latest
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -87,7 +88,7 @@ jobs:
         id: juce
         run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
 
-      # Restores the macOS Release cache of the C++ workflow's build job.
+      # Restores the shared Debug/Release archive of the C++ platform suite.
       # The path list must match the build job's for the cache to restore.
       # Restore-only, since the build job owns saving it.
       - name: Restore C++ build directory
@@ -98,8 +99,8 @@ jobs:
             cpp/cmake-build-mac-release
             cpp/cmake-build-windows-debug
             cpp/cmake-build-windows-release
-          key: ${{ runner.os }}-Release-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
-          restore-keys: ${{ runner.os }}-Release-cmake-
+          key: ${{ runner.os }}-suite-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-suite-cmake-
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
