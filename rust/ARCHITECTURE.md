@@ -607,6 +607,8 @@ An `.aif` source rewritten in place has a copy of it disposed of first,
 through the `FileDisposer`, which moves files to the system trash by default.
 Its temporary output is then persisted over the validated source.
 Identity checks narrow external-edit races but are not an atomic compare-and-swap of a directory entry.
+Conversions require a filesystem that supports hard links.
+On one without them, the commit fails, the source is kept, and the rendered audio is retained under a recovered name.
 Cancellation is checked once more before the original is touched.
 
 **Runs.**
