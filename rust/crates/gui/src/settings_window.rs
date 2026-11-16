@@ -457,17 +457,26 @@ impl SettingsView {
             .child(choice_row(
                 "Output",
                 DEVICE_TOOLTIP,
-                Select::new(&self.device_select).small(),
+                Select::new(&self.device_select)
+                    .id("output-device")
+                    .small()
+                    .accessibility_label("Output"),
             ))
             .child(choice_row(
                 "Sample rate",
                 SAMPLE_RATE_TOOLTIP,
-                Select::new(&self.rate_select).small(),
+                Select::new(&self.rate_select)
+                    .id("output-sample-rate")
+                    .small()
+                    .accessibility_label("Sample rate"),
             ))
             .child(choice_row(
                 "Buffer size",
                 BUFFER_SIZE_TOOLTIP,
-                Select::new(&self.buffer_select).small(),
+                Select::new(&self.buffer_select)
+                    .id("output-buffer-size")
+                    .small()
+                    .accessibility_label("Buffer size"),
             ))
     }
 
@@ -597,8 +606,18 @@ impl SettingsView {
                 |settings, checked| settings.show_loudness_graph = checked,
                 cx,
             )))
-            .child(limit_field("loudness-minimum", "Min (LUFS)", &self.minimum_input))
-            .child(limit_field("loudness-maximum", "Max (LUFS)", &self.maximum_input))
+            .child(limit_field(
+                "loudness-minimum",
+                "Min (LUFS)",
+                "Minimum loudness (LUFS)",
+                &self.minimum_input,
+            ))
+            .child(limit_field(
+                "loudness-maximum",
+                "Max (LUFS)",
+                "Maximum loudness (LUFS)",
+                &self.maximum_input,
+            ))
     }
 
     /// Renders an option checkbox that changes one setting.
@@ -746,7 +765,7 @@ fn choice_row(caption: &'static str, tooltip_text: &'static str, control: impl I
 }
 
 /// Renders a captioned loudness limit field.
-fn limit_field(id: &'static str, caption: &'static str, input: &Entity<InputState>) -> AnyElement {
+fn limit_field(id: &'static str, caption: &'static str, label: &'static str, input: &Entity<InputState>) -> AnyElement {
     div()
         .id(id)
         .tooltip(tooltip(LOUDNESS_LIMIT_TOOLTIP))
@@ -758,14 +777,14 @@ fn limit_field(id: &'static str, caption: &'static str, input: &Entity<InputStat
         .child(
             div()
                 .w(rems(LIMIT_INPUT_WIDTH))
-                .child(Input::new(input).id("loudness-limit-input").small()),
+                .child(Input::new(input).id("loudness-limit-input").aria_label(label).small()),
         )
         .into_any_element()
 }
 
 #[cfg(test)]
 mod integration_tests {
-    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
     use gpui_kit::{AnyWindowHandle, Bounds, Point, TestAppContext, WindowBounds, WindowOptions, px, size};
 
     use super::*;
@@ -797,6 +816,81 @@ mod integration_tests {
             .expect("opens the settings view")
         });
         OpenedSettings { handle: window, view }
+    }
+
+    /// Names remain attached to the actual semantic controls after canonical settings synchronization.
+    #[gpui_kit::test]
+    fn settings_controls_have_names_and_accept_keyboard_edits(cx: &mut TestAppContext) {
+        let OpenedSettings { handle, view } = open_settings(cx);
+        let snapshot = SettingsSnapshot {
+            devices: vec![String::from("Test output")],
+            device: Some(String::from("Test output")),
+            sample_rate: Some(48_000),
+            ..SettingsSnapshot::default()
+        };
+        for _ in 0..2 {
+            cx.update_window(handle, |_, window, cx| {
+                view.update(cx, |view, cx| view.sync(&snapshot, window, cx));
+                window.render_frame(cx);
+                for label in ["Output", "Sample rate", "Buffer size", "Preview view"] {
+                    let control = window.find_by_label(label);
+                    assert_eq!(control.role(), Some(gpui_kit::Role::ComboBox), "{label}");
+                }
+                for label in ["Minimum loudness (LUFS)", "Maximum loudness (LUFS)"] {
+                    let control = window.find_by_label(label);
+                    assert_eq!(control.role(), Some(gpui_kit::Role::TextInput), "{label}");
+                }
+                window.within("loudness-minimum").click("input-state", cx);
+                window.press(if cfg!(target_os = "macos") { "cmd-a" } else { "ctrl-a" }, cx);
+                window.input("-36", cx);
+                window.press("enter", cx);
+            })
+            .expect("operates named settings controls");
+            cx.run_until_parked();
+            cx.read(|cx| assert_eq!(view.read(cx).settings.loudness_minimum, -36));
+        }
+    }
+
+    /// Named selectors deliver real keyboard requests without opening physical audio devices.
+    #[gpui_kit::test]
+    fn named_output_choices_deliver_keyboard_requests(cx: &mut TestAppContext) {
+        let OpenedSettings { handle, view } = open_settings(cx);
+        let snapshot = SettingsSnapshot {
+            devices: vec![String::from("First output"), String::from("Second output")],
+            device: Some(String::from("First output")),
+            sample_rate: Some(44_100),
+            capabilities: Some(DeviceCapabilities {
+                sample_rates: vec![44_100, 48_000],
+                buffer_sizes: vec![256],
+                ..DeviceCapabilities::default()
+            }),
+            ..SettingsSnapshot::default()
+        };
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.sync(&snapshot, window, cx));
+        })
+        .expect("supplies synthetic device capabilities");
+        for (id, label) in [
+            ("output-device", "Output"),
+            ("output-sample-rate", "Sample rate"),
+            ("output-buffer-size", "Buffer size"),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert_eq!(window.find_by_label(label).role(), Some(gpui_kit::Role::ComboBox));
+                window.within(id).click("input", cx);
+                window.press("down", cx);
+                window.press("enter", cx);
+            })
+            .expect("operates named output selector");
+            cx.run_until_parked();
+        }
+        cx.read(|cx| {
+            let settings = &view.read(cx).settings;
+            assert_eq!(settings.output_device.as_deref(), Some("Second output"));
+            assert_eq!(settings.sample_rate, Some(48_000));
+            assert_eq!(settings.buffer_size, Some(256));
+        });
     }
 
     /// Reactivating retained windows never replaces an explicit application motion override.
