@@ -184,19 +184,29 @@ impl AppView {
     /// and reports the plugins of the preset that could not be loaded.
     /// The preview chain is taken out of the player first, because the old instances are destroyed.
     pub(super) fn load_chain_preset(&mut self, name: &str, cx: &mut Context<Self>) {
-        let Some(ui) = UiThread::current() else {
-            return;
-        };
         let preset = match self.plugins.presets.load(name) {
             Ok(preset) => preset,
             Err(error) => {
                 let error = anyhow::Error::from(error);
-                return self.report_status(format!("Could not load the preset: {error:#}"), cx);
+                self.report_status(format!("Could not load the preset: {error:#}"), cx);
+                self.sync_chain_window(cx);
+                return;
             }
+        };
+        let Some(ui) = UiThread::current() else {
+            self.sync_chain_window(cx);
+            return;
         };
         self.detach_plugin_preview();
         let preset_name = preset.name.clone();
         self.plugins.chain.replace(&ui, preset.chain(), Some(preset.name));
+        if let Some(plugin_window) = &self.chain_window
+            && let Some(view) = plugin_window.view.upgrade()
+        {
+            let _ = plugin_window.handle.update(cx, |_, window, cx| {
+                view.update(cx, |view, cx| view.preset_loaded(&preset_name, window, cx));
+            });
+        }
         let failed: Vec<String> = self
             .plugins
             .chain
@@ -619,6 +629,7 @@ impl AppView {
             .map(|(index, slot)| ChainRow {
                 id: slot.id(),
                 label: slot_label(index + 1, slot.plugin()),
+                plugin_name: plugin_label(slot.plugin()),
                 enabled: slot.is_enabled(),
                 detail: slot.error().map_or_else(
                     || {
@@ -806,5 +817,134 @@ fn plugin_window_options(title: &'static str, width: f32, height: f32, cx: &App)
         }),
         focus: true,
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use std::fs;
+
+    use audiobatch_plugins::PluginChain;
+    use gpui_kit::TestAppContext;
+    use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+
+    use super::*;
+    use crate::app::LaunchOptions;
+    use crate::test_helpers::plugin_dispatcher;
+
+    #[gpui_kit::test]
+    fn failed_preset_load_reconciles_open_chain_without_saving_or_clearing_name(cx: &mut TestAppContext) {
+        let (main_window, app) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::menus::install(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| AppView::new(&LaunchOptions::default(), plugin_dispatcher(), window, cx))
+            })
+            .expect("opens isolated production application")
+        });
+        let chain_window = cx
+            .update_window(main_window, |_, _, cx| {
+                app.update(cx, |view, cx| {
+                    view.plugins
+                        .presets
+                        .save("Mastering", &PluginChain::default())
+                        .expect("temporary canonical preset");
+                    fs::write(view.plugins.presets.folder().join("Streaming.json"), "not a preset")
+                        .expect("temporary corrupt preset");
+                    view.plugins.chain.set_preset_name(Some(String::from("Mastering")));
+                    fs::write(&view.plugins.paths.chain, "unchanged persisted chain")
+                        .expect("chain persistence sentinel");
+                    view.plugins.pending_editor_capture = Some(3);
+                    view.open_chain_window(cx);
+                    view.chain_window.as_ref().expect("open chain window").handle
+                })
+            })
+            .expect("opens production chain with temporary presets");
+        cx.update_window(chain_window, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Mastering"));
+            window.click("chain-preset-name", cx);
+            window.press("secondary-a", cx);
+            window.input("My independent save name", cx);
+            window.click("chain-preset-select", cx);
+        })
+        .expect("opens the production preset picker");
+        cx.run_until_parked();
+        cx.update_window(chain_window, |_, window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .expect("requests the corrupt preset through the actual select");
+        cx.run_until_parked();
+        cx.update_window(chain_window, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Mastering"));
+            assert_eq!(
+                window.find_by_label("Preset name").value(),
+                Some("My independent save name")
+            );
+        })
+        .expect("owner rejection restores canonical selection and preserves name intent");
+        cx.read(|cx| {
+            let view = app.read(cx);
+            assert!(view.status.starts_with("Could not load the preset:"), "{}", view.status);
+            assert_eq!(view.plugins.chain.preset_name(), Some("Mastering"));
+            assert!(!view.plugins.chain.is_modified());
+            assert_eq!(view.plugins.pending_editor_capture, Some(3));
+            assert_eq!(
+                fs::read_to_string(&view.plugins.paths.chain).expect("persisted chain"),
+                "unchanged persisted chain"
+            );
+        });
+    }
+
+    #[gpui_kit::test]
+    fn deleting_selected_preset_clears_owner_selection_without_clearing_typed_name(cx: &mut TestAppContext) {
+        let (main_window, app) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::menus::install(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| AppView::new(&LaunchOptions::default(), plugin_dispatcher(), window, cx))
+            })
+            .expect("opens isolated production application")
+        });
+        let chain_window = cx
+            .update_window(main_window, |_, _, cx| {
+                app.update(cx, |view, cx| {
+                    view.plugins
+                        .presets
+                        .save("Mastering", &PluginChain::default())
+                        .expect("temporary preset");
+                    view.plugins.chain.set_preset_name(Some(String::from("Mastering")));
+                    view.open_chain_window(cx);
+                    view.chain_window.as_ref().expect("open chain window").handle
+                })
+            })
+            .expect("opens chain for preset deletion");
+        cx.update_window(chain_window, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("chain-preset-name", cx);
+            window.press("secondary-a", cx);
+            window.input("Keep this save name", cx);
+            window.click("preset-delete", cx);
+        })
+        .expect("requests deletion using the production button");
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Delete");
+        cx.run_until_parked();
+        cx.update_window(chain_window, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Choose a preset…"));
+            assert_eq!(window.find_by_label("Preset name").value(), Some("Keep this save name"));
+            assert_eq!(window.find("preset-delete").disabled(), Some(true));
+        })
+        .expect("deletion clears actual selection while retaining independent Save-as input");
+        cx.read(|cx| {
+            let view = app.read(cx);
+            assert_eq!(view.plugins.chain.preset_name(), None);
+            assert!(!view.plugins.presets.contains("Mastering"));
+        });
     }
 }

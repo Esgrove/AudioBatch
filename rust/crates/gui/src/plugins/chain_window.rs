@@ -130,6 +130,8 @@ pub struct ChainRow {
     pub id: SlotId,
     /// Label with the position, for example "1. Vendor Delay (VST3)".
     pub label: String,
+    /// Plugin label without its mutable processing position, used to name the slot's controls.
+    pub plugin_name: String,
     /// True when the slot processes audio.
     pub enabled: bool,
     /// Latency text, or the error of a plugin that could not be loaded or prepared.
@@ -204,16 +206,35 @@ impl ChainView {
             self.preset_select
                 .update(cx, |state, cx| state.set_items(names, window, cx));
         }
-        if snapshot.current_preset != self.snapshot.current_preset
-            && let Some(current) = &snapshot.current_preset
-        {
-            let current = SharedString::from(current.clone());
+        // A user confirmation changes the select before the owner can accept or reject the load.
+        // Compare its actual value even when the canonical snapshot has not changed.
+        let selected = self.preset_select.read(cx).selected_value().map(SharedString::as_ref);
+        if selected != snapshot.current_preset.as_deref() {
             self.preset_select
-                .update(cx, |state, cx| state.set_selected_value(&current, window, cx));
-            self.preset_name
-                .update(cx, |state, cx| state.set_value(current, window, cx));
+                .update(cx, |state, cx| match &snapshot.current_preset {
+                    Some(current) => state.set_selected_value(&current.clone().into(), window, cx),
+                    None => state.set_selected_index(None, window, cx),
+                });
+        }
+        if snapshot.current_preset != self.snapshot.current_preset {
+            let typed_name = self.preset_name.read(cx).value();
+            // Clearing or deleting a preset clears an inherited name, not an independently typed Save-as name.
+            if snapshot.current_preset.is_some() || self.snapshot.current_preset.as_deref() == Some(typed_name.as_ref())
+            {
+                let name = snapshot.current_preset.clone().unwrap_or_default();
+                self.preset_name
+                    .update(cx, |state, cx| state.set_value(name, window, cx));
+            }
         }
         self.snapshot = snapshot;
+        cx.notify();
+    }
+
+    /// Adopts the name of an accepted load, including a reload of the already-current preset.
+    /// Ordinary snapshot refreshes and rejected loads leave independent Save-as input untouched.
+    pub fn preset_loaded(&self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.preset_name
+            .update(cx, |state, cx| state.set_value(name.to_owned(), window, cx));
         cx.notify();
     }
 
@@ -222,19 +243,15 @@ impl ChainView {
         self.preset_select.read(cx).selected_value().map(ToString::to_string)
     }
 
-    /// Loads the picked preset in place of the chain,
-    /// and puts its name in the name field, so saving again replaces it.
+    /// Requests the picked preset without committing its name before the owner accepts the load.
     fn on_preset_selected(
-        &mut self,
+        _view: &mut Self,
         _select: &Entity<SelectState<Vec<SharedString>>>,
         event: &SelectEvent<Vec<SharedString>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let SelectEvent::Confirm(Some(name)) = event {
-            let name = name.clone();
-            self.preset_name
-                .update(cx, |state, cx| state.set_value(name.clone(), window, cx));
             cx.emit(ChainEvent::LoadPreset(name.to_string()));
         }
         cx.notify();
@@ -342,6 +359,8 @@ impl ChainView {
             .child(
                 div().flex_1().min_w_0().child(
                     Select::new(&self.preset_select)
+                        .id("chain-preset-select")
+                        .accessibility_label("Chain preset")
                         .small()
                         .placeholder("Choose a preset…")
                         .disabled(self.snapshot.presets.is_empty()),
@@ -361,7 +380,14 @@ impl ChainView {
             .items_center()
             .gap(px(ROW_SPACING))
             .child(div().flex_none().child("Save as"))
-            .child(div().flex_1().min_w_0().child(Input::new(&self.preset_name).small()))
+            .child(
+                div().flex_1().min_w_0().child(
+                    Input::new(&self.preset_name)
+                        .id("chain-preset-name")
+                        .aria_label("Preset name")
+                        .small(),
+                ),
+            )
             .child(
                 Button::new("preset-save")
                     .label(save_label)
@@ -423,6 +449,7 @@ impl ChainView {
         let id = row.id;
         let key = id.raw();
         let enable = Checkbox::new(("chain-enabled", key))
+            .accessibility_label(format!("Enable {}", row.plugin_name))
             .checked(row.enabled)
             .tooltip(ENABLE_TOOLTIP)
             .on_change(cx.listener(move |_, checked: &bool, _, cx| cx.emit(ChainEvent::SetEnabled(id, *checked))));
@@ -455,6 +482,7 @@ impl ChainView {
             .gap(px(ARROW_SPACING))
             .child(
                 Button::new(("chain-up", key))
+                    .accessibility_label(format!("Move {} earlier", row.plugin_name))
                     .icon(IconName::ArrowUp)
                     .w(px(ROW_BUTTON_HEIGHT))
                     .h(px(ROW_BUTTON_HEIGHT))
@@ -464,6 +492,7 @@ impl ChainView {
             )
             .child(
                 Button::new(("chain-down", key))
+                    .accessibility_label(format!("Move {} later", row.plugin_name))
                     .icon(IconName::ArrowDown)
                     .w(px(ROW_BUTTON_HEIGHT))
                     .h(px(ROW_BUTTON_HEIGHT))
@@ -645,8 +674,13 @@ mod integration_tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{TestAppContext, WindowOptions};
+    use audiobatch_plugins::{ChainSlot, PluginChain};
+    use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+    use gpui_kit::{Bounds, Point, Role, TestAppContext, WindowBounds, WindowOptions, size};
+    use tempfile::tempdir;
+
+    use crate::plugins::live_chain::LiveChain;
+    use crate::test_helpers::{effect, plugin_dispatcher};
 
     use super::*;
 
@@ -655,6 +689,339 @@ mod integration_tests {
         handle: gpui_kit::AnyWindowHandle,
         view: Entity<ChainView>,
         _subscription: gpui_kit::Subscription,
+    }
+
+    impl OpenedChain {
+        /// Opens the production chain view with an event recorder and room for its real controls.
+        fn new(snapshot: ChainSnapshot, events: &Rc<RefCell<Vec<ChainEvent>>>, cx: &TestAppContext) -> Self {
+            cx.update(|cx| {
+                gpui_kit::init(cx);
+                crate::theme::install(cx);
+                let (handle, view) = gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            Point::default(),
+                            size(px(900.0), px(760.0)),
+                        ))),
+                        ..WindowOptions::default()
+                    },
+                    cx,
+                    |window, cx| cx.new(|cx| ChainView::new(snapshot, window, cx)),
+                )
+                .expect("opens the chain window");
+                let events = Rc::clone(events);
+                let subscription = cx.subscribe(&view, move |_, event: &ChainEvent, _| {
+                    events.borrow_mut().push(event.clone());
+                });
+                Self {
+                    handle,
+                    view,
+                    _subscription: subscription,
+                }
+            })
+        }
+
+        /// Applies an owner snapshot through the production synchronization path.
+        fn sync(&self, snapshot: ChainSnapshot, cx: &mut TestAppContext) {
+            cx.update_window(self.handle, |_, window, cx| {
+                self.view.update(cx, |view, cx| view.sync(snapshot, window, cx));
+                window.render_frame(cx);
+            })
+            .expect("syncs the chain snapshot");
+            cx.run_until_parked();
+        }
+    }
+
+    /// Collects stable slot identities without loading any plugin, using a temporary serialized chain.
+    fn chain_rows() -> Vec<ChainRow> {
+        let directory = tempdir().expect("temporary chain storage");
+        let path = directory.path().join("plugin-chain.json");
+        PluginChain {
+            slots: vec![
+                ChainSlot::new(effect("Tests", "Delay")),
+                ChainSlot::new(effect("Tests", "Limiter")),
+            ],
+        }
+        .save_to(&path)
+        .expect("save fixture chain");
+        let chain = LiveChain::load(path, plugin_dispatcher(), 48_000).chain;
+        chain
+            .slots()
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| ChainRow {
+                id: slot.id(),
+                label: super::super::labels::slot_label(index + 1, slot.plugin()),
+                plugin_name: super::super::labels::plugin_label(slot.plugin()),
+                enabled: true,
+                detail: String::from("Latency: 0 samples"),
+                failed: false,
+                can_edit: false,
+            })
+            .collect()
+    }
+
+    /// The preset identities are intentionally independent of their current list positions.
+    fn preset_snapshot() -> ChainSnapshot {
+        ChainSnapshot {
+            presets: vec![String::from("Mastering"), String::from("Streaming")],
+            current_preset: Some(String::from("Mastering")),
+            ..ChainSnapshot::default()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn selection_requests_one_load_and_unchanged_snapshot_restores_canonical(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let snapshot = preset_snapshot();
+        let chain = OpenedChain::new(snapshot.clone(), &events, cx);
+        cx.update_window(chain.handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find_by_label("Chain preset").role(), Some(Role::ComboBox));
+            assert_eq!(window.find_by_label("Preset name").role(), Some(Role::TextInput));
+            window.click("chain-preset-name", cx);
+            window.press("secondary-a", cx);
+            window.input("My alternate master", cx);
+            window.click("chain-preset-select", cx);
+        })
+        .expect("opens the actual preset select");
+        cx.run_until_parked();
+        cx.update_window(chain.handle, |_, window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .expect("confirms the second preset with the keyboard");
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            vec![ChainEvent::LoadPreset(String::from("Streaming"))]
+        );
+        chain.sync(snapshot, cx);
+        cx.update_window(chain.handle, |_, window, _| {
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Mastering"));
+            assert_eq!(window.find_by_label("Preset name").value(), Some("My alternate master"));
+        })
+        .expect("restores the canonical selection without destroying Save-as intent");
+        assert_eq!(
+            events.borrow().len(),
+            1,
+            "programmatic reconciliation never requests another load"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn rejected_selection_returns_to_none_and_successful_load_commits_name(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut snapshot = preset_snapshot();
+        snapshot.current_preset = None;
+        let chain = OpenedChain::new(snapshot.clone(), &events, cx);
+        cx.update_window(chain.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("chain-preset-name", cx);
+            window.input("My draft name", cx);
+            window.click("chain-preset-select", cx);
+        })
+        .expect("opens the picker without a canonical preset");
+        cx.run_until_parked();
+        cx.update_window(chain.handle, |_, window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .expect("requests the first preset");
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            vec![ChainEvent::LoadPreset(String::from("Mastering"))]
+        );
+        chain.sync(snapshot.clone(), cx);
+        cx.update_window(chain.handle, |_, window, _| {
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Choose a preset…"));
+            assert_eq!(window.find_by_label("Preset name").value(), Some("My draft name"));
+        })
+        .expect("unchanged None rolls back the selection but not the independent name");
+        snapshot.current_preset = Some(String::from("Mastering"));
+        chain.sync(snapshot, cx);
+        cx.update_window(chain.handle, |_, window, _| {
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Mastering"));
+            assert_eq!(window.find_by_label("Preset name").value(), Some("Mastering"));
+        })
+        .expect("an accepted owner load adopts its canonical name");
+        assert_eq!(events.borrow().len(), 1);
+    }
+
+    /// A same-preset confirmation adopts its name only after an explicit successful-load acknowledgement.
+    #[gpui_kit::test]
+    fn same_preset_reload_preserves_draft_on_rejection_and_adopts_name_on_success(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let snapshot = preset_snapshot();
+        let chain = OpenedChain::new(snapshot.clone(), &events, cx);
+        for accepted in [false, true] {
+            cx.update_window(chain.handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click("chain-preset-name", cx);
+                window.press("secondary-a", cx);
+                window.input("Independent save name", cx);
+                window.click("chain-preset-select", cx);
+            })
+            .expect("opens the current preset picker after editing Save as");
+            cx.run_until_parked();
+            cx.update_window(chain.handle, |_, window, cx| window.press("enter", cx))
+                .expect("confirms the already-selected preset");
+            cx.run_until_parked();
+            assert_eq!(
+                events.borrow_mut().drain(..).collect::<Vec<_>>(),
+                vec![ChainEvent::LoadPreset(String::from("Mastering"))]
+            );
+            chain.sync(snapshot.clone(), cx);
+            cx.update_window(chain.handle, |_, window, cx| {
+                assert_eq!(
+                    window.find_by_label("Preset name").value(),
+                    Some("Independent save name")
+                );
+                if accepted {
+                    chain
+                        .view
+                        .update(cx, |view, cx| view.preset_loaded("Mastering", window, cx));
+                }
+                window.render_frame(cx);
+                assert_eq!(window.find_by_label("Chain preset").value(), Some("Mastering"));
+                assert_eq!(
+                    window.find_by_label("Preset name").value(),
+                    Some(if accepted { "Mastering" } else { "Independent save name" })
+                );
+            })
+            .expect("only successful reload acknowledgement adopts the canonical name");
+            assert!(events.borrow().is_empty(), "acknowledgement emits no duplicate load");
+        }
+    }
+
+    #[gpui_kit::test]
+    fn preset_list_insert_reorder_and_removal_reconcile_by_value(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut snapshot = preset_snapshot();
+        let chain = OpenedChain::new(snapshot.clone(), &events, cx);
+        cx.update_window(chain.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("chain-preset-name", cx);
+            window.press("secondary-a", cx);
+            window.input("Separate save name", cx);
+        })
+        .expect("types an independent save name");
+        snapshot.presets = vec![
+            String::from("Broadcast"),
+            String::from("Streaming"),
+            String::from("Mastering"),
+        ];
+        snapshot.scanning = true;
+        chain.sync(snapshot.clone(), cx);
+        cx.update_window(chain.handle, |_, window, _| {
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Mastering"));
+            assert_eq!(window.find_by_label("Preset name").value(), Some("Separate save name"));
+        })
+        .expect("preserves selected value and typed name across list insertion and reordering");
+        snapshot.current_preset = None;
+        snapshot.presets.retain(|name| name != "Mastering");
+        chain.sync(snapshot, cx);
+        cx.update_window(chain.handle, |_, window, _| {
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Choose a preset…"));
+            assert_eq!(window.find("preset-delete").disabled(), Some(true));
+            assert_eq!(window.find_by_label("Preset name").value(), Some("Separate save name"));
+        })
+        .expect("deletion clears selection but preserves independently typed Save-as input");
+        assert!(events.borrow().is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn clearing_chain_clears_inherited_preset_name_and_selection(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut snapshot = preset_snapshot();
+        snapshot.rows = chain_rows();
+        let chain = OpenedChain::new(snapshot.clone(), &events, cx);
+        cx.update_window(chain.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("chain-clear", cx);
+        })
+        .expect("clicks Clear Chain");
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), vec![ChainEvent::Clear]);
+        snapshot.current_preset = None;
+        snapshot.rows.clear();
+        chain.sync(snapshot, cx);
+        cx.update_window(chain.handle, |_, window, _| {
+            assert_eq!(window.find_by_label("Chain preset").value(), Some("Choose a preset…"));
+            assert_eq!(window.find_by_label("Preset name").value(), Some(""));
+            assert_eq!(window.find("preset-delete").disabled(), Some(true));
+        })
+        .expect("clears the inherited name and actual selection");
+        assert_eq!(events.borrow().len(), 1);
+    }
+
+    #[gpui_kit::test]
+    fn slot_controls_keep_names_and_ids_after_owner_sync_and_reorder(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut snapshot = ChainSnapshot {
+            rows: chain_rows(),
+            ..ChainSnapshot::default()
+        };
+        let delay = snapshot.rows[0].id;
+        let chain = OpenedChain::new(snapshot.clone(), &events, cx);
+        cx.update_window(chain.handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                window.find_by_label("Enable Tests Delay (VST3)").role(),
+                Some(Role::CheckBox)
+            );
+            assert_eq!(
+                window.find_by_label("Move Tests Delay (VST3) earlier").role(),
+                Some(Role::Button)
+            );
+            assert_eq!(
+                window.find_by_label("Move Tests Delay (VST3) later").role(),
+                Some(Role::Button)
+            );
+            assert_eq!(
+                window.find_by_label("Move Tests Limiter (VST3) earlier").role(),
+                Some(Role::Button)
+            );
+            window.click(("chain-enabled", delay.raw()), cx);
+        })
+        .expect("toggles the specifically named delay slot");
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), vec![ChainEvent::SetEnabled(delay, false)]);
+        snapshot.rows[0].enabled = false;
+        chain.sync(snapshot.clone(), cx);
+        cx.update_window(chain.handle, |_, window, cx| {
+            assert_eq!(window.find_by_label("Enable Tests Delay (VST3)").checked(), Some(false));
+            window.click(("chain-down", delay.raw()), cx);
+        })
+        .expect("moves the delay through its stable slot control");
+        cx.run_until_parked();
+        snapshot.rows.swap(0, 1);
+        for (index, row) in snapshot.rows.iter_mut().enumerate() {
+            row.label = format!("{}. {}", index + 1, row.plugin_name);
+        }
+        chain.sync(snapshot, cx);
+        cx.update_window(chain.handle, |_, window, cx| {
+            assert_eq!(
+                window.find_by_label("Enable Tests Delay (VST3)").role(),
+                Some(Role::CheckBox)
+            );
+            assert_eq!(
+                window.find_by_label("Move Tests Delay (VST3) later").disabled(),
+                Some(true)
+            );
+            window.click(("chain-up", delay.raw()), cx);
+        })
+        .expect("same plugin-specific controls act on the same slot after reordering");
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                ChainEvent::SetEnabled(delay, false),
+                ChainEvent::Move(delay, 1),
+                ChainEvent::Move(delay, -1)
+            ]
+        );
     }
 
     #[gpui_kit::test]
