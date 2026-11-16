@@ -82,7 +82,7 @@ endif()
 
 # The plugin's own source gets strict warnings as errors, like the application sources.
 # JUCE headers are written to JUCE's own rules, so they are treated as system or external headers.
-# The JUCE module sources compiled into the target keep JUCE's recommended warnings only.
+# The JUCE module sources keep JUCE's recommended warnings, promoted to errors in application sanitizer builds.
 set(AUDIOBATCH_TEST_PLUGIN_JUCE_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../cpp/JUCE/modules")
 if(MSVC)
     set(AUDIOBATCH_TEST_PLUGIN_WARNINGS
@@ -127,6 +127,18 @@ target_link_libraries(
 if(PROJECT_IS_TOP_LEVEL)
     include("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/Pluginval.cmake")
     audiobatch_add_pluginval(AudioBatchTestPlugin)
+endif()
+
+# Include the test plugin's JUCE modules and format wrapper in the sanitizer warning gate.
+if(AUDIOBATCH_SANITIZE)
+    get_property(
+        test_plugin_targets
+        DIRECTORY
+        PROPERTY BUILDSYSTEM_TARGETS
+    )
+    foreach(target IN LISTS test_plugin_targets)
+        set_property(TARGET ${target} PROPERTY COMPILE_WARNING_AS_ERROR YES)
+    endforeach()
 endif()
 
 # Path of the built VST3 bundle, for the C++ tests that load it.

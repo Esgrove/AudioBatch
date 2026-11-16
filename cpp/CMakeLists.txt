@@ -254,7 +254,7 @@ if(AUDIOBATCH_COVERAGE)
 endif()
 
 # libc++ hardening turns out of range access through std::span, std::optional, std::vector and similar into a trap.
-# Debug builds, which include the sanitizer builds, use the extensive checks,
+# Debug builds use the extensive checks,
 # and the other configurations keep the cheap checks that are suitable for release builds.
 # MSVC STL hardening adds the same cheap checks to every configuration,
 # on top of the iterator debugging that Debug builds already have.

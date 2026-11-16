@@ -804,9 +804,11 @@ and check its output against the expected files in `../fixtures/plugin_expected/
 It uses AddressSanitizer and UndefinedBehaviorSanitizer with `macos-asan`,
 or MSVC AddressSanitizer only with `windows-asan`.
 `./sanitize.sh --clang` uses LLVM AddressSanitizer with `windows-clang-asan` on Windows.
-That preset uses RelWithDebInfo because LLVM AddressSanitizer does not support the Debug CRT.
-It retains debug symbols and standard library hardening, without native targeting or LTO.
 `./sanitize.sh --thread` runs them under ThreadSanitizer on macOS.
+All sanitizer builds use RelWithDebInfo for optimization with debug symbols.
+The macOS builds also retain frame pointers for sanitizer stack traces.
+They retain standard library hardening, without native targeting or LTO.
+LLVM AddressSanitizer also requires the release CRT on Windows.
 Each sanitizer build has its own build directory, so the debug build is not affected.
 Sanitizers do not run the CLI or driven GUI integration tier.
 `./sanitize.sh --realtime` uses Homebrew LLVM in a separate macOS workspace to check hardware-free preview callbacks.

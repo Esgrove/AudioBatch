@@ -521,7 +521,9 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   `./sanitize.sh --thread` does the same under ThreadSanitizer with the `macos-tsan` preset in `cmake-build-mac-tsan`.
   On Windows, `./sanitize.sh` uses the MSVC AddressSanitizer with the `windows-asan` preset in `cmake-build-windows-asan`.
   `./sanitize.sh --clang` uses LLVM AddressSanitizer with the `windows-clang-asan` preset.
-  It uses RelWithDebInfo and the dynamic release CRT because LLVM AddressSanitizer rejects the Debug CRT.
+  All sanitizer presets use RelWithDebInfo for optimization with debug symbols.
+  Sanitizer targets, including the test plugin and its JUCE modules, treat warnings as errors.
+  The Windows LLVM preset uses the dynamic release CRT because LLVM AddressSanitizer rejects the Debug CRT.
   The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
 - `./sanitize.sh --realtime` checks the hardware-free preview callbacks with Homebrew LLVM RealtimeSanitizer on macOS,
   using the `macos-rtsan` preset in `cmake-build-mac-rtsan`.

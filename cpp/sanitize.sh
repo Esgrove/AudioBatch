@@ -13,6 +13,7 @@ and the macos-tsan preset uses ThreadSanitizer.
 The macos-rtsan preset checks focused preview callbacks with Homebrew LLVM RealtimeSanitizer.
 On Windows, the windows-asan preset uses the MSVC AddressSanitizer.
 The --clang option selects LLVM AddressSanitizer with the windows-clang-asan preset.
+All sanitizer builds use RelWithDebInfo for optimizations and debug symbols.
 Each preset uses its own build directory, such as cmake-build-mac-asan,
 so the debug build directory is not affected.
 
@@ -41,7 +42,7 @@ parse_arguments() {
     USE_CLANG=false
     TEST_TARGET="AudioBatchTests"
     TEST_LABEL="unit"
-    BUILD_CONFIG="Debug"
+    BUILD_CONFIG="RelWithDebInfo"
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -105,7 +106,6 @@ select_sanitizer_build() {
             if [ "$USE_CLANG" = true ]; then
                 PRESET="windows-clang-asan"
                 BUILD_DIR="cmake-build-windows-clang-asan"
-                BUILD_CONFIG="RelWithDebInfo"
                 load_msvc_environment
                 CLANG_RESOURCE_DIR=$(clang-cl /clang:--print-resource-dir | tr -d '\r')
                 PATH="$(cygpath -u "$CLANG_RESOURCE_DIR")/lib/windows:$PATH"
