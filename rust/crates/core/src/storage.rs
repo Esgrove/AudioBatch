@@ -9,7 +9,10 @@ pub const DATA_ROOT_VARIABLE: &str = "AUDIOBATCH_DATA_ROOT";
 
 /// Why an explicit storage root cannot safely be used.
 #[derive(Debug, thiserror::Error)]
-#[error("AUDIOBATCH_DATA_ROOT must name an absolute directory without NUL bytes: {}", root.display())]
+#[error(
+    "AUDIOBATCH_DATA_ROOT must name an absolute directory without NUL bytes or line breaks: {}",
+    root.display()
+)]
 pub struct StorageError {
     root: PathBuf,
 }
@@ -34,7 +37,7 @@ impl StoragePaths {
     /// Resolves an explicit root without changing process-wide environment variables.
     ///
     /// # Errors
-    /// Returns an error unless the root is an absolute directory path without NUL bytes.
+    /// Returns an error unless the root is an absolute directory path without NUL bytes or line breaks.
     pub fn in_root(root: &Path) -> Result<Self, StorageError> {
         Self::resolve(Some(root.as_os_str()))
     }
@@ -58,10 +61,17 @@ impl StoragePaths {
     }
 
     /// Resolves a supplied environment value, keeping validation independently testable.
+    /// Line breaks are refused like NUL bytes, the same rule the C++ application applies,
+    /// so both applications accept exactly the same explicit roots.
     fn resolve(root: Option<&OsStr>) -> Result<Self, StorageError> {
         if let Some(root) = root {
             let root = Path::new(root);
-            if !root.is_absolute() || root.as_os_str().as_encoded_bytes().contains(&0) || root.is_file() {
+            let has_forbidden_byte = root
+                .as_os_str()
+                .as_encoded_bytes()
+                .iter()
+                .any(|byte| matches!(byte, b'\0' | b'\n' | b'\r'));
+            if !root.is_absolute() || has_forbidden_byte || root.is_file() {
                 return Err(StorageError {
                     root: root.to_path_buf(),
                 });

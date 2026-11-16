@@ -17,8 +17,15 @@ fn isolates_shared_and_private_storage_below_one_root() {
 
 /// Invalid supplied roots fail instead of falling back to user storage.
 #[test]
-fn rejects_relative_empty_nul_and_file_roots() {
-    for root in ["", "relative", "../other", "/tmp/invalid\0root"] {
+fn rejects_relative_empty_nul_line_break_and_file_roots() {
+    for root in [
+        "",
+        "relative",
+        "../other",
+        "/tmp/invalid\0root",
+        "/tmp/invalid\nroot",
+        "/tmp/invalid\rroot",
+    ] {
         assert!(StoragePaths::in_root(Path::new(root)).is_err());
     }
     let file = tempfile::NamedTempFile::new().expect("temporary file");
