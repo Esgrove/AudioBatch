@@ -17,7 +17,8 @@ See cpp/install.sh --help and rust/install.sh --help for them.
 Installing both projects accepts only the options both scripts have, such as --cli-only and --verbose.
 Use -c or --clean to delete the C++ release CMake build directory before rebuilding.
 Rust build artifacts are not cleaned. Use -l or --cli-only to install only the CLIs.
-The options are not passed to either ImageControl plugin installer.
+Only -z/--notarize and -v/--verbose are also passed to the C++ ImageControl plugin installer.
+Run image-control-plugin/install.sh or image-control-plugin/rust/install.sh directly for their other options.
 
 OPTIONS: All options are optional
     -h | --help

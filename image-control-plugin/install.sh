@@ -283,9 +283,11 @@ install_audio_unit() {
 validate_audio_unit() {
     require_command auval
     # The restarted registry takes a moment to list the new component, and auval fails until it does.
-    local attempt
+    # The listing is captured before matching.
+    # With pipefail, an early grep -q exit would fail the pipeline through auval's SIGPIPE even when it is listed.
+    local attempt listing
     for attempt in $(seq 1 30); do
-        if auval -a 2> /dev/null | grep -q "aufx Egic Esgr"; then
+        if listing=$(auval -a 2> /dev/null) && grep -q "aufx Egic Esgr" <<< "$listing"; then
             break
         fi
         if [ "$attempt" -eq 30 ]; then
