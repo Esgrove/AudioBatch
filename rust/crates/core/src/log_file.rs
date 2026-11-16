@@ -18,7 +18,7 @@ use std::io::{IsTerminal as _, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use jiff::Zoned;
+use jiff::ZonedDateTime;
 use tracing::level_filters::LevelFilter;
 use tracing::{Event, Level, Metadata, Subscriber};
 use tracing_log::NormalizeEvent as _;
@@ -81,7 +81,7 @@ struct LogFormat;
 
 impl FormatTime for LocalTime {
     fn format_time(&self, writer: &mut Writer<'_>) -> std::fmt::Result {
-        write!(writer, "{}", Zoned::now().strftime("%H:%M:%S"))
+        write!(writer, "{}", ZonedDateTime::now().strftime("%H:%M:%S"))
     }
 }
 
@@ -156,7 +156,7 @@ pub fn install(log_name: &str, stderr_level: LevelFilter) -> Result<PathBuf, Log
     writeln!(
         file,
         "\n**********************************************************\n{log_name}\nLog started: {}\n",
-        Zoned::now().strftime("%d %b %Y %H:%M:%S %Z (%:z)")
+        ZonedDateTime::now().strftime("%d %b %Y %H:%M:%S %Z (%:z)")
     )
     .map_err(|source| LogFileError::Write {
         path: path.clone(),
