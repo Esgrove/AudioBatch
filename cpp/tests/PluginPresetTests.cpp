@@ -575,11 +575,11 @@ void PluginPresetTests::testPresetFiles()
 
     beginTest("Windows reserved names are refused on every platform");
     {
-        for (const auto* name : {"CON", "con", "Nul", "aux.txt", "COM1", "lpt9 ", "PRN.backup"}) {
-            expect(plugin_presets::isReservedPresetName(name), name);
+        for (const auto* presetName : {"CON", "con", "Nul", "aux.txt", "COM1", "lpt9 ", "PRN.backup"}) {
+            expect(plugin_presets::isReservedPresetName(presetName), presetName);
         }
-        for (const auto* name : {"CONSOLE", "Mastering", "COM10", "LPT0", "NULL", "my con"}) {
-            expect(!plugin_presets::isReservedPresetName(name), name);
+        for (const auto* presetName : {"CONSOLE", "Mastering", "COM10", "LPT0", "NULL", "my con"}) {
+            expect(!plugin_presets::isReservedPresetName(presetName), presetName);
         }
 
         const TemporaryDirectory temporary;
