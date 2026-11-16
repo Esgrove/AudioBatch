@@ -167,6 +167,25 @@ const void* bufferOffset(const std::size_t bytes)
     return std::bit_cast<const void*>(static_cast<std::uintptr_t>(bytes));
 }
 
+/// Reads what the current context offers, calling only functions that exist in every OpenGL version.
+/// A context without OpenGL 3.3, such as Windows' software fallback, can leave the later entry points null,
+/// so the renderer checks their pointers before it calls any of them.
+SpectrogramContextCapabilities readContextCapabilities(const juce::OpenGLContext& context)
+{
+    const bool functionsLoaded = juce::gl::glCreateShader != nullptr && juce::gl::glGenVertexArrays != nullptr
+        && juce::gl::glVertexAttribDivisor != nullptr && juce::gl::glDrawArraysInstanced != nullptr
+        && juce::gl::glGenFramebuffers != nullptr && juce::gl::glBlitFramebuffer != nullptr
+        && juce::gl::glBufferData != nullptr && juce::gl::glActiveTexture != nullptr;
+    const auto version = context.getVersion();
+    return {
+        .desktopOpenGL = context.getAPI() == juce::OpenGLAPI::openGL,
+        .shadersAvailable = context.areShadersAvailable(),
+        .majorVersion = version.major,
+        .minorVersion = version.minor,
+        .requiredFunctionsLoaded = functionsLoaded,
+    };
+}
+
 /// Compiles and links a shader program, or returns null and logs why it failed.
 std::unique_ptr<juce::OpenGLShaderProgram> buildProgram(
     const juce::OpenGLContext& context,
@@ -382,6 +401,12 @@ void SpectrogramRenderer::submitParticles(const std::span<const SpectrogramParti
 void SpectrogramRenderer::newOpenGLContextCreated()
 {
     gpuMilliseconds = -1.0;
+    // A context without OpenGL 3.3 marks rendering unavailable before any GL object is created,
+    // so audio processing and the controls keep working without the spectrogram.
+    if (!supportsSpectrogramRendering(readContextCapabilities(openGLContext))) {
+        unavailable = true;
+        return;
+    }
     if (!createPrograms()) {
         unavailable = true;
         releaseResources();
@@ -994,5 +1019,18 @@ void SpectrogramRenderer::releaseResources()
 #endif
     gpuMilliseconds = -1.0;
     ready = false;
+}
+
+/// Returns whether a context can run the renderer: desktop OpenGL 3.3 or newer with shaders
+/// and every entry point the renderer calls.
+/// Kept free of GL calls, so the decision can be tested without a context.
+bool supportsSpectrogramRendering(const SpectrogramContextCapabilities& capabilities)
+{
+    constexpr int requiredMajor {3};
+    constexpr int requiredMinor {3};
+    const bool versionSupported = capabilities.majorVersion > requiredMajor
+        || (capabilities.majorVersion == requiredMajor && capabilities.minorVersion >= requiredMinor);
+    return capabilities.desktopOpenGL && capabilities.shadersAvailable && versionSupported
+        && capabilities.requiredFunctionsLoaded;
 }
 }  // namespace esgrove::image_control

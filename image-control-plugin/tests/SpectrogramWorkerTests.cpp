@@ -1,7 +1,7 @@
 /// Tests SpectrogramWorker on its own thread with a real analyzer ring and renderer, without an OpenGL context:
 /// queued audio becomes particles for the renderer, the audio is discarded unanalyzed while analysis is off,
 /// and a producer much faster than real time cannot keep the worker from finishing its passes.
-/// Also tests the renderer's bounded pending-particle hand-off entirely on the CPU.
+/// Also tests the renderer's bounded pending-particle hand-off and its context capability rule entirely on the CPU.
 
 #include "analysis/SpatialAnalyzer.h"
 #include "analysis/StereoSampleFifo.h"
@@ -179,6 +179,46 @@ TEST(SpectrogramRendererCpu, OversizedSubmissionRetainsOnlyItsNewestCappedTail)
     renderer.submitParticles(batch, false);
     EXPECT_EQ(renderer.pendingParticleCount(), SPECTROGRAM_MAX_PENDING_PARTICLES);
     access.expectPending(batch.last(SPECTROGRAM_MAX_PENDING_PARTICLES), false);
+}
+
+TEST(SpectrogramRendererCpu, RequiresDesktopOpenGl33WithShadersAndEveryEntryPoint)
+{
+    const SpectrogramContextCapabilities capable {
+        .desktopOpenGL = true,
+        .shadersAvailable = true,
+        .majorVersion = 3,
+        .minorVersion = 3,
+        .requiredFunctionsLoaded = true,
+    };
+    EXPECT_TRUE(supportsSpectrogramRendering(capable));
+    EXPECT_TRUE(supportsSpectrogramRendering({
+        .desktopOpenGL = true,
+        .shadersAvailable = true,
+        .majorVersion = 4,
+        .minorVersion = 1,
+        .requiredFunctionsLoaded = true,
+    }));
+
+    // A legacy software context reports GL 1.1 without shaders and leaves the later entry points null.
+    auto legacy = capable;
+    legacy.shadersAvailable = false;
+    legacy.majorVersion = 1;
+    legacy.minorVersion = 1;
+    legacy.requiredFunctionsLoaded = false;
+    EXPECT_FALSE(supportsSpectrogramRendering(legacy));
+
+    auto noShaders = capable;
+    noShaders.shadersAvailable = false;
+    EXPECT_FALSE(supportsSpectrogramRendering(noShaders));
+    auto oldVersion = capable;
+    oldVersion.minorVersion = 2;
+    EXPECT_FALSE(supportsSpectrogramRendering(oldVersion));
+    auto missingFunctions = capable;
+    missingFunctions.requiredFunctionsLoaded = false;
+    EXPECT_FALSE(supportsSpectrogramRendering(missingFunctions));
+    auto embedded = capable;
+    embedded.desktopOpenGL = false;
+    EXPECT_FALSE(supportsSpectrogramRendering(embedded));
 }
 
 TEST(SpectrogramRendererCpu, ClearDropsWaitingParticlesAndRemainsPending)

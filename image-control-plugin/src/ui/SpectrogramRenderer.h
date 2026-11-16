@@ -151,6 +151,20 @@ struct SpectrogramRenderTarget {
     int height {0};
 };
 
+/// What a newly created OpenGL context offers, read on the GL thread before any renderer resource is created.
+struct SpectrogramContextCapabilities {
+    /// Whether the context is desktop OpenGL rather than OpenGL ES.
+    bool desktopOpenGL {false};
+    /// Whether JUCE found a usable shading language on the context.
+    bool shadersAvailable {false};
+    /// Major version of the created context.
+    int majorVersion {0};
+    /// Minor version of the created context.
+    int minorVersion {0};
+    /// Whether every OpenGL 3.3 entry point the renderer calls was loaded.
+    bool requiredFunctionsLoaded {false};
+};
+
 /// The work submitted since the last frame, guarded by the renderer's pending-work mutex.
 struct SpectrogramPendingWork {
     /// Plot rectangle in logical editor coordinates.
@@ -333,4 +347,6 @@ private:
     /// Whether the GL resources exist.
     bool ready {false};
 };
+
+[[nodiscard]] bool supportsSpectrogramRendering(const SpectrogramContextCapabilities& capabilities);
 }  // namespace esgrove::image_control
