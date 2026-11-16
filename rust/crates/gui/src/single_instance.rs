@@ -32,10 +32,11 @@ const LOCK_FILE_NAME: &str = "gui-instance.lock";
 /// First line the running app sends, so a launch does not hand its paths to another program on a reused port.
 const GREETING: &str = "AudioBatchRs instance";
 
-/// Longest wait for the running app to accept the connection and to answer, and for each line of a launch.
+/// Longest wait for the running app to accept the connection and to answer, and for each read of a launch.
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Longest time the running app spends reading one launch, so a slow client cannot block the next one.
+/// Longest time the running app spends reading one launch, including its token line,
+/// so a client that trickles bytes without completing a line cannot block the next one.
 const RECEIVE_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Most bytes the running app reads from one launch.
@@ -53,6 +54,24 @@ pub enum Claim {
 struct InstanceEndpoint {
     port: u16,
     token: String,
+}
+
+/// Reads a launch connection until one shared deadline,
+/// bounding every read by the time left rather than restarting a timeout for each read.
+struct DeadlineReader {
+    stream: TcpStream,
+    deadline: Instant,
+}
+
+impl std::io::Read for DeadlineReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        self.stream.set_read_timeout(Some(remaining.min(CONNECT_TIMEOUT)))?;
+        self.stream.read(buffer)
+    }
 }
 
 /// Hands the paths to a running app, or makes this launch the running app.
@@ -174,11 +193,20 @@ fn listen(port_file: &Path, token: &str) -> anyhow::Result<TcpListener> {
 /// Greets a launch and reads its paths, one per line, after the token it must send first.
 /// Returns none for a connection without the token.
 /// Reading stops at the end of the connection, after `MAXIMUM_RECEIVED_BYTES`, or after `RECEIVE_DEADLINE`.
-fn receive(mut stream: TcpStream, token: &str) -> Option<Vec<PathBuf>> {
-    stream.set_read_timeout(Some(CONNECT_TIMEOUT)).ok()?;
+fn receive(stream: TcpStream, token: &str) -> Option<Vec<PathBuf>> {
+    receive_within(stream, token, RECEIVE_DEADLINE)
+}
+
+/// Receives one launch, stopping every read, including the token line, once the deadline has passed.
+/// Paths that arrived completely before the deadline are kept.
+fn receive_within(mut stream: TcpStream, token: &str, deadline: Duration) -> Option<Vec<PathBuf>> {
+    stream.set_write_timeout(Some(CONNECT_TIMEOUT)).ok()?;
     writeln!(stream, "{GREETING}").ok()?;
-    let started = Instant::now();
-    let mut lines = BufReader::new(stream.take(MAXIMUM_RECEIVED_BYTES)).lines();
+    let reader = DeadlineReader {
+        stream,
+        deadline: Instant::now() + deadline,
+    };
+    let mut lines = BufReader::new(reader.take(MAXIMUM_RECEIVED_BYTES)).lines();
     if lines.next()?.ok()? != token {
         return None;
     }
@@ -190,15 +218,15 @@ fn receive(mut stream: TcpStream, token: &str) -> Option<Vec<PathBuf>> {
         if !line.is_empty() {
             paths.push(PathBuf::from(line));
         }
-        if started.elapsed() > RECEIVE_DEADLINE {
-            break;
-        }
     }
     Some(paths)
 }
 
 #[cfg(test)]
 mod test_single_instance {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::*;
 
     /// Listens like the running app with a fixed token, and returns the server thread that receives one launch.
@@ -232,6 +260,52 @@ mod test_single_instance {
         writeln!(stream, "wrong token\n/music/a.wav").expect("writes");
         drop(stream);
         assert_eq!(server.join().expect("the server thread ends"), None);
+    }
+
+    #[test]
+    fn a_trickling_client_is_dropped_at_the_deadline_and_the_next_launch_is_accepted() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let port_file = directory.path().join(PORT_FILE_NAME);
+        let listener = listen(&port_file, "secret").expect("listens");
+        let deadline = Duration::from_millis(200);
+        let server = std::thread::spawn(move || {
+            let (trickling, _) = listener.accept().expect("accepts the trickling client");
+            let started = Instant::now();
+            let dropped = receive_within(trickling, "secret", deadline);
+            let elapsed = started.elapsed();
+            let (launch, _) = listener.accept().expect("accepts the next launch");
+            (dropped, elapsed, receive(launch, "secret"))
+        });
+        let port = parse_port_file(&std::fs::read_to_string(&port_file).expect("read"))
+            .expect("parses")
+            .port;
+        let stop = Arc::new(AtomicBool::new(false));
+        let trickler = {
+            let stop = Arc::clone(&stop);
+            let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connects");
+            std::thread::spawn(move || {
+                // Never completes a line, so only a whole-connection deadline can end the read.
+                while !stop.load(Ordering::Relaxed) && stream.write_all(b"s").is_ok() {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            })
+        };
+        let paths = [PathBuf::from("/music/a.wav")];
+        let mut forwarded = false;
+        for _ in 0..20 {
+            if forward(&port_file, &paths) {
+                forwarded = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        stop.store(true, Ordering::Relaxed);
+        trickler.join().expect("the trickling client ends");
+        let (dropped, elapsed, received) = server.join().expect("the server thread ends");
+        assert_eq!(dropped, None);
+        assert!(elapsed < deadline + CONNECT_TIMEOUT, "took {elapsed:?}");
+        assert!(forwarded);
+        assert_eq!(received, Some(paths.to_vec()));
     }
 
     #[test]
