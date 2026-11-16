@@ -3,9 +3,8 @@
 
 use std::rc::Rc;
 
-use gpui_kit::base::spring;
-
 use gpui_kit::base::slider::{Slider as BaseSlider, SliderIndicator, SliderThumb, SliderTrack};
+use gpui_kit::base::spring;
 use gpui_kit::component::slider::SliderState;
 use gpui_kit::component::{ActiveTheme as _, ThemeStyled as _};
 use gpui_kit::{
@@ -28,16 +27,6 @@ const THUMB_RING_WIDTH: f32 = 3.0;
 /// Opacity of the thumb's outward ring.
 const THUMB_RING_ALPHA: f32 = 0.5;
 
-/// Moves the focused slider down by one configured step.
-#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
-#[action(namespace = preview_slider)]
-struct Decrease;
-
-/// Moves the focused slider up by one configured step.
-#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
-#[action(namespace = preview_slider)]
-struct Increase;
-
 /// Moves the focused slider down by the larger keyboard increment.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = preview_slider)]
@@ -48,28 +37,10 @@ struct DecreaseFast;
 #[action(namespace = preview_slider)]
 struct IncreaseFast;
 
-/// Moves the focused slider to its lower bound.
-#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
-#[action(namespace = preview_slider)]
-struct Minimum;
-
-/// Moves the focused slider to its upper bound.
-#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
-#[action(namespace = preview_slider)]
-struct Maximum;
-
 /// Restores the focused slider's domain default.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = preview_slider)]
 struct Reset;
-
-/// Value movement requested by the focused slider's keyboard command.
-#[derive(Clone, Copy)]
-enum Movement {
-    Steps(f32),
-    Minimum,
-    Maximum,
-}
 
 /// Pointer feedback retained by the thumb across rendered element trees.
 #[derive(Default)]
@@ -143,12 +114,10 @@ impl RenderOnce for FocusSlider {
                     reset(&ControlsEvent::ResetSlider(control), window, cx);
                 }
             });
-        let wrapper = movement_handler::<Decrease>(wrapper, &self.state, enabled, Movement::Steps(-1.0));
-        let wrapper = movement_handler::<Increase>(wrapper, &self.state, enabled, Movement::Steps(1.0));
-        let wrapper = movement_handler::<DecreaseFast>(wrapper, &self.state, enabled, Movement::Steps(-COARSE_STEPS));
-        let wrapper = movement_handler::<IncreaseFast>(wrapper, &self.state, enabled, Movement::Steps(COARSE_STEPS));
-        let wrapper = movement_handler::<Minimum>(wrapper, &self.state, enabled, Movement::Minimum);
-        let wrapper = movement_handler::<Maximum>(wrapper, &self.state, enabled, Movement::Maximum);
+        // Base handles unmodified navigation on the focused semantic slider.
+        // Only the application-specific coarse shortcuts need contextual actions.
+        let wrapper = movement_handler::<DecreaseFast>(wrapper, &self.state, enabled, -COARSE_STEPS);
+        let wrapper = movement_handler::<IncreaseFast>(wrapper, &self.state, enabled, COARSE_STEPS);
         wrapper
             .rounded(cx.theme().radius)
             .when(focused, |wrapper| wrapper.focus_ring_style(window, cx))
@@ -165,18 +134,10 @@ impl RenderOnce for FocusSlider {
 pub(super) fn install(cx: &mut App) {
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
-        KeyBinding::new("left", Decrease, context),
-        KeyBinding::new("down", Decrease, context),
-        KeyBinding::new("right", Increase, context),
-        KeyBinding::new("up", Increase, context),
         KeyBinding::new("shift-left", DecreaseFast, context),
         KeyBinding::new("shift-down", DecreaseFast, context),
         KeyBinding::new("shift-right", IncreaseFast, context),
         KeyBinding::new("shift-up", IncreaseFast, context),
-        KeyBinding::new("pagedown", DecreaseFast, context),
-        KeyBinding::new("pageup", IncreaseFast, context),
-        KeyBinding::new("home", Minimum, context),
-        KeyBinding::new("end", Maximum, context),
         KeyBinding::new(
             if cfg!(target_os = "macos") { "cmd-0" } else { "ctrl-0" },
             Reset,
@@ -190,7 +151,7 @@ fn movement_handler<A: gpui_kit::Action>(
     element: Stateful<Div>,
     state: &Entity<SliderState>,
     enabled: bool,
-    movement: Movement,
+    steps: f32,
 ) -> Stateful<Div> {
     let state = state.clone();
     element.on_action(move |_: &A, window, cx| {
@@ -198,11 +159,7 @@ fn movement_handler<A: gpui_kit::Action>(
             return;
         }
         state.update(cx, |state, cx| {
-            let delta = match movement {
-                Movement::Steps(steps) => steps * state.step_value(),
-                Movement::Minimum => state.min_value() - state.value().start(),
-                Movement::Maximum => state.max_value() - state.value().start(),
-            };
+            let delta = steps * state.step_value();
             state.step_thumb(false, delta, window, cx);
         });
     })

@@ -47,6 +47,19 @@ struct WaveformEvents {
     _subscription: Subscription,
 }
 
+/// Records one slider notification's kind and value without duplicating its production state.
+#[derive(Debug)]
+struct SliderNotification {
+    released: bool,
+    value: f32,
+}
+
+/// Records ordered slider events beside the production persistence subscriber.
+struct SliderEvents {
+    events: Rc<RefCell<Vec<SliderNotification>>>,
+    _subscription: Subscription,
+}
+
 /// Owns isolated application storage and source copies for a workflow.
 struct Workflow {
     directory: Arc<TempDir>,
@@ -103,6 +116,50 @@ impl WaveformEvents {
             (actual - seconds).abs() < SEEK_TOLERANCE_SECONDS,
             "{actual} != {seconds}"
         );
+    }
+}
+
+impl SliderEvents {
+    /// Observes the retained production slider without replacing its existing owner subscription.
+    fn subscribe(workflow: &Workflow, slider: &Entity<SliderState>, cx: &mut TestAppContext) -> Self {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let recorded = Rc::clone(&events);
+        let subscription = cx
+            .update_window(workflow.window, |_, window, cx| {
+                workflow.view.update(cx, |_, cx| {
+                    cx.subscribe_in(slider, window, move |_, _, event: &SliderEvent, _, _| {
+                        let notification = match event {
+                            SliderEvent::Change(value) => SliderNotification {
+                                released: false,
+                                value: value.start(),
+                            },
+                            SliderEvent::Release(value) => SliderNotification {
+                                released: true,
+                                value: value.start(),
+                            },
+                        };
+                        recorded.borrow_mut().push(notification);
+                    })
+                })
+            })
+            .expect("observe production slider events");
+        Self {
+            events,
+            _subscription: subscription,
+        }
+    }
+
+    /// Requires exactly one Change followed by one Release carrying the requested snapped value.
+    fn assert_commit(&self, expected: f32) {
+        let events = self.events.borrow();
+        assert_eq!(events.len(), 2, "exactly one committed event pair: {events:?}");
+        assert!(
+            !events[0].released && events[1].released,
+            "Change then Release: {events:?}"
+        );
+        for event in events.iter() {
+            assert!((event.value - expected).abs() < 0.0001, "{event:?} != {expected}");
+        }
     }
 }
 
@@ -309,16 +366,113 @@ impl Workflow {
     }
 }
 
-/// Sends the exact Change-only state operation used by native accessibility Increment and Decrement.
-/// GPUI Kit's test platform exposes accessibility snapshots but no native accessibility-action dispatcher.
-/// Calling the retained production slider's `step_thumb` therefore proves its real owner subscription and persistence,
-/// not OS accessibility routing, disabled-action suppression, or a keyboard binding.
+/// Sends the committed semantic step used by native accessibility Increment and Decrement.
+/// A changed value emits Change followed by Release, while a clamped or zero step emits neither.
+/// The test platform exposes snapshots but no native accessibility-action dispatcher,
+/// so this seam proves the real owner subscription and persistence, not OS accessibility routing or key delivery.
 fn step_slider(workflow: &Workflow, slider: &Entity<SliderState>, delta: f32, cx: &mut TestAppContext) {
     cx.update_window(workflow.window, |_, window, cx| {
         slider.update(cx, |slider, cx| slider.step_thumb(false, delta, window, cx));
     })
     .expect("step the retained production slider");
     cx.run_until_parked();
+}
+
+/// Changes gain through actual waveform-wheel events without a slider Release or a debounce-clock advance.
+fn wheel_gain(workflow: &Workflow, steps: i32, cx: &mut TestAppContext) {
+    let previous = cx
+        .update_window(workflow.window, |_, window, _| window.modifiers())
+        .expect("capture modifiers before the gain-wheel gesture");
+    let secondary = cx.read(Modifiers::secondary_key);
+    let notch = point(px(0.0), px(if steps > 0 { 20.0 } else { -20.0 }));
+    for _ in 0..steps.unsigned_abs() {
+        workflow.scroll_preview(notch, secondary, cx);
+    }
+    cx.update_window(workflow.window, |_, window, cx| window.change_modifiers(previous, cx))
+        .expect("release the gain-wheel modifier before later pointer input");
+    cx.run_until_parked();
+}
+
+/// Requires an unsubmitted gain edit at the tested boundary, retaining exactly its original file identities.
+fn assert_pending_gain(workflow: &Workflow, paths: &[PathBuf], cx: &TestAppContext) {
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        let mut actual = view.pending_gain_paths.clone();
+        let mut expected = paths.to_vec();
+        actual.sort();
+        expected.sort();
+        assert_eq!(actual, expected, "the edit must still await its tested flush boundary");
+        assert!(view.gain_store_task.is_some(), "the fallback deadline is still pending");
+    });
+}
+
+/// Checks actual SQLite storage without waiting for a pending edit's deadline or worker submission.
+fn assert_stored_gain(workflow: &Workflow, path: &Path, expected: Option<f32>, cx: &TestAppContext) {
+    let stored = workflow_cache(workflow, cx)
+        .get_analysis(path)
+        .expect("stored source")
+        .custom_gain_db;
+    assert!(same_custom_gain(stored, expected), "stored {stored:?} != {expected:?}");
+}
+
+/// Begins an unfinished target gesture at an exact domain value using its production track geometry.
+fn press_target(workflow: &Workflow, mode: NormalizeMode, value: f32, cx: &mut TestAppContext) -> Point<Pixels> {
+    let position = cx
+        .update_window(workflow.window, |_, window, cx| {
+            window.render_frame(cx);
+            let bounds = workflow.view.read(cx).normalize_target_slider(mode).read(cx).bounds();
+            let range = crate::normalization::target_range(mode);
+            let fraction = (value - range.minimum) / (range.maximum - range.minimum);
+            let position = point(bounds.left() + bounds.size.width * fraction, bounds.center().y);
+            window.pointer_down(position, MouseButton::Left, cx);
+            position
+        })
+        .expect("press the production target at its domain value");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let actual = workflow
+            .view
+            .read(cx)
+            .normalize_target_slider(mode)
+            .read(cx)
+            .value()
+            .start();
+        assert!(
+            (actual - value).abs() < 0.0001,
+            "native target press {actual} != {value}"
+        );
+    });
+    position
+}
+
+/// Moves a held target gesture through the platform drag threshold to its exact stepped value.
+fn move_target(workflow: &Workflow, mode: NormalizeMode, value: f32, cx: &mut TestAppContext) -> Point<Pixels> {
+    let position = cx
+        .update_window(workflow.window, |_, window, cx| {
+            let bounds = workflow.view.read(cx).normalize_target_slider(mode).read(cx).bounds();
+            let range = crate::normalization::target_range(mode);
+            let fraction = (value - range.minimum) / (range.maximum - range.minimum);
+            let position = point(bounds.left() + bounds.size.width * fraction, bounds.center().y);
+            window.pointer_move(position - point(px(12.0), px(0.0)), Some(MouseButton::Left), cx);
+            window.pointer_move(position, Some(MouseButton::Left), cx);
+            position
+        })
+        .expect("move the unfinished production target gesture");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let actual = workflow
+            .view
+            .read(cx)
+            .normalize_target_slider(mode)
+            .read(cx)
+            .value()
+            .start();
+        assert!(
+            (actual - value).abs() < 0.0001,
+            "native target drag {actual} != {value}"
+        );
+    });
+    position
 }
 
 /// Advances only GPUI test time, then delivers ready timers and foreground subscription effects.
@@ -373,6 +527,47 @@ fn choose_target(workflow: &Workflow, mode: NormalizeMode, cx: &mut TestAppConte
     .expect("choose the production normalization target");
     cx.run_until_parked();
     cx.read(|cx| workflow.view.read(cx).normalize_target_slider(mode).clone())
+}
+
+/// Clicks a mode button and proves its synchronous save before any deferred slider Release subscriber can run.
+/// A held target gesture will also emit Release on mouse-up outside, so inspect storage inside the same update.
+fn switch_pending_target_mode(workflow: &Workflow, mode: NormalizeMode, cx: &mut TestAppContext) {
+    let previous = cx.read(|cx| workflow.view.read(cx).settings.normalize_mode);
+    let expected = cx.read(|cx| {
+        f64::from(
+            workflow
+                .view
+                .read(cx)
+                .normalize_target_slider(previous)
+                .read(cx)
+                .value()
+                .start(),
+        )
+    });
+    let slider = cx.read(|cx| workflow.view.read(cx).normalize_target_slider(previous).clone());
+    let events = SliderEvents::subscribe(workflow, &slider, cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        let id = match mode {
+            NormalizeMode::Peak => control_ids::NORMALIZE_PEAK,
+            NormalizeMode::Loudness => control_ids::NORMALIZE_LOUDNESS,
+        };
+        let position = window.find(id).bounds().center();
+        window.pointer_down(position, MouseButton::Left, cx);
+        assert!(workflow.view.read(cx).normalize_target_store_task.is_some());
+        window.pointer_up(position, MouseButton::Left, cx);
+        assert_eq!(workflow.view.read(cx).settings.normalize_mode, mode);
+        assert!(workflow.view.read(cx).normalize_target_store_task.is_none());
+        assert!(
+            events.events.borrow().is_empty(),
+            "Release subscription has not run yet"
+        );
+        assert!(
+            (saved_target(workflow, previous) - expected).abs() < 1e-5,
+            "the mode boundary itself saves before deferred Release delivery"
+        );
+    })
+    .expect("switch mode before deferred slider Release delivery");
+    cx.run_until_parked();
 }
 
 /// Reads the independently persisted value for one mode without changing modes or triggering quit-time saving.
@@ -860,7 +1055,14 @@ async fn integration_keyboard_gain_slider_steps_clamps_resets_and_persists(cx: &
             Some(1.1)
         ));
     });
-    advance_slider_clock(Duration::from_millis(500), cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(
+            view.gain_store_task.is_none(),
+            "keyboard commits without a fallback delay"
+        );
+        assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+    });
     wait_for_gain(&workflow, &source, Some(1.1), cx).await;
     workflow.menu_key("end", cx);
     workflow.menu_key("right", cx);
@@ -909,6 +1111,172 @@ async fn integration_keyboard_gain_slider_steps_clamps_resets_and_persists(cx: &
     .expect("collapse restores surviving action focus");
     workflow.menu_key(&format!("{primary}-a"), cx);
     cx.read(|cx| assert_eq!(workflow.view.read(cx).selected_paths(cx), vec![source]));
+}
+
+/// Native keyboard movement emits exactly one Change/Release pair and clamped keys emit no notifications.
+/// Gain and both target subscribers commit immediately, rather than depending on the fallback debounce.
+#[gpui_kit::test]
+async fn integration_keyboard_slider_event_order_and_immediate_commit(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "key-events.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let press = press_slider(&workflow, control_ids::GAIN_TRACK, 0.5, cx);
+    release_slider(&workflow, press, cx);
+    let gain = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    let events = SliderEvents::subscribe(&workflow, &gain, cx);
+    for (key, expected) in [
+        ("right", 0.1),
+        ("left", 0.0),
+        ("up", 0.1),
+        ("down", 0.0),
+        ("pageup", 1.0),
+        ("pagedown", 0.0),
+        ("shift-right", 1.0),
+        ("shift-left", 0.0),
+        ("shift-up", 1.0),
+        ("shift-down", 0.0),
+        ("end", 12.0),
+        ("home", -12.0),
+    ] {
+        events.events.borrow_mut().clear();
+        workflow.menu_key(key, cx);
+        events.assert_commit(expected);
+        cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            assert!(view.gain_store_task.is_none(), "{key} commits without debounce");
+            assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+        });
+    }
+    wait_for_gain(&workflow, &source, Some(-12.0), cx).await;
+    for key in ["home", "left", "down", "pagedown", "shift-left", "shift-down"] {
+        events.events.borrow_mut().clear();
+        workflow.menu_key(key, cx);
+        assert!(events.events.borrow().is_empty(), "clamped {key} reports nothing");
+    }
+    events.events.borrow_mut().clear();
+    workflow.menu_key("end", cx);
+    events.assert_commit(12.0);
+    for key in ["end", "right", "up", "pageup", "shift-right", "shift-up"] {
+        events.events.borrow_mut().clear();
+        workflow.menu_key(key, cx);
+        assert!(events.events.borrow().is_empty(), "upper-clamped {key} reports nothing");
+    }
+    for mode in [NormalizeMode::Peak, NormalizeMode::Loudness] {
+        let slider = choose_target(&workflow, mode, cx);
+        let press = press_slider(&workflow, control_ids::NORMALIZE_TARGET, 0.5, cx);
+        release_slider(&workflow, press, cx);
+        let events = SliderEvents::subscribe(&workflow, &slider, cx);
+        let range = crate::normalization::target_range(mode);
+        let middle = f32::midpoint(range.minimum, range.maximum);
+        for (key, expected) in [
+            ("right", middle + range.step),
+            ("left", middle),
+            ("up", middle + range.step),
+            ("down", middle),
+            ("pageup", range.step.mul_add(10.0, middle)),
+            ("pagedown", middle),
+            ("end", range.maximum),
+            ("home", range.minimum),
+        ] {
+            events.events.borrow_mut().clear();
+            workflow.menu_key(key, cx);
+            events.assert_commit(expected);
+            assert!((saved_target(&workflow, mode) - f64::from(expected)).abs() < 1e-5);
+            cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
+        }
+        for key in ["home", "left", "pagedown"] {
+            events.events.borrow_mut().clear();
+            workflow.menu_key(key, cx);
+            assert!(
+                events.events.borrow().is_empty(),
+                "clamped target {key} reports nothing"
+            );
+        }
+    }
+}
+
+/// Committed accessibility-step semantics use the real retained gain and target subscribers.
+/// This seam does not claim native assistive-technology event delivery.
+#[gpui_kit::test]
+async fn integration_slider_semantic_steps_commit_once_and_clamp_without_events(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "semantic-events.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let gain = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    let events = SliderEvents::subscribe(&workflow, &gain, cx);
+    step_slider(&workflow, &gain, 0.1, cx);
+    events.assert_commit(0.1);
+    cx.read(|cx| assert!(workflow.view.read(cx).gain_store_task.is_none()));
+    wait_for_gain(&workflow, &source, Some(0.1), cx).await;
+    for delta in [100.0, 1.0, 0.0] {
+        events.events.borrow_mut().clear();
+        step_slider(&workflow, &gain, delta, cx);
+        if delta > 12.0 {
+            events.assert_commit(12.0);
+        } else {
+            assert!(
+                events.events.borrow().is_empty(),
+                "clamped or zero step emits no events"
+            );
+        }
+    }
+    double_click_slider(&workflow, control_ids::GAIN_TRACK, cx);
+    wait_for_gain(&workflow, &source, None, cx).await;
+    for mode in [NormalizeMode::Peak, NormalizeMode::Loudness] {
+        let slider = choose_target(&workflow, mode, cx);
+        let before = cx.read(|cx| slider.read(cx).value().start());
+        let events = SliderEvents::subscribe(&workflow, &slider, cx);
+        step_slider(&workflow, &slider, -crate::normalization::target_range(mode).step, cx);
+        let expected = before - crate::normalization::target_range(mode).step;
+        events.assert_commit(expected);
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
+        assert!((saved_target(&workflow, mode) - f64::from(expected)).abs() < 1e-5);
+        events.events.borrow_mut().clear();
+        step_slider(&workflow, &slider, 0.0, cx);
+        assert!(events.events.borrow().is_empty());
+        double_click_slider(&workflow, control_ids::NORMALIZE_TARGET, cx);
+        assert!(
+            (saved_target(&workflow, mode) - f64::from(crate::normalization::target_range(mode).default)).abs() < 1e-6
+        );
+    }
+}
+
+/// Reducing motion during a thumb's decorative spring keeps production input, focus, and semantics intact.
+/// The test sets the application preference directly, it does not probe the native system preference.
+#[gpui_kit::test]
+fn integration_slider_reduced_motion_preserves_real_input_focus_and_semantics(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(workflow.window, |_, window, cx| {
+        window
+            .within(control_ids::ZOOM_TRACK)
+            .hover(("slider-thumb", 0_u32), cx);
+    })
+    .expect("start the production thumb's decorative hover spring");
+    cx.update(|cx| cx.set_reduce_motion(true));
+    cx.read(|cx| assert!(cx.reduce_motion(), "explicit test preference is active"));
+    let press = press_slider(&workflow, control_ids::ZOOM_TRACK, 0.25, cx);
+    release_slider(&workflow, press, cx);
+    let zoom = cx.read(|cx| workflow.view.read(cx).zoom_slider.clone());
+    let before = cx.read(|cx| zoom.read(cx).value().start());
+    assert!((before - 1.0).abs() > 0.01, "reduced-motion pointer input changes zoom");
+    let events = SliderEvents::subscribe(&workflow, &zoom, cx);
+    workflow.menu_key("right", cx);
+    let changed = cx.read(|cx| zoom.read(cx).value().start());
+    assert!((changed - before - 0.01).abs() < 0.0001);
+    events.assert_commit(changed);
+    cx.update_window(workflow.window, |_, window, _| {
+        let snapshot = window.find_by_label(control_ids::ZOOM_LABEL);
+        assert_eq!(snapshot.role(), Some(gpui_kit::Role::Slider));
+        assert_eq!(snapshot.focused(), Some(true));
+        assert_eq!(snapshot.label(), Some(control_ids::ZOOM_LABEL));
+        assert_ne!(snapshot.disabled(), Some(true));
+    })
+    .expect("reduced motion preserves the focused semantic slider");
 }
 
 /// A thumb press focuses the actual slider node, and disabling gain leaves a valid root command path.
@@ -1098,8 +1466,16 @@ async fn integration_slider_retained_scan_gain_overrides_earlier_cached_result(c
     workflow.select(&source, cx);
     let cache = workflow_cache(&workflow, cx);
     let captured = cache.get_analysis(&source).expect("earlier cached result");
-    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
-    step_slider(&workflow, &slider, 0.1, cx);
+    workflow.preview(&source, cx).await;
+    wheel_gain(&workflow, 1, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&source), cx);
+    assert!(
+        cache
+            .get_analysis(&source)
+            .expect("unsubmitted edit")
+            .custom_gain_db
+            .is_none()
+    );
     cx.update(|cx| {
         workflow.view.update(cx, |view, cx| {
             // Deliver the production scan-adoption seam deterministically, without racing a cache reader thread.
@@ -1130,12 +1506,20 @@ async fn integration_slider_overlapping_gain_selections_keep_latest_deadline(cx:
     workflow.add(vec![first.clone(), second.clone()], cx);
     workflow.idle(cx).await;
     workflow.select(&first, cx);
-    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    workflow.preview(&first, cx).await;
     let cache = workflow_cache(&workflow, cx);
-    step_slider(&workflow, &slider, 0.1, cx);
+    wheel_gain(&workflow, 1, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&first), cx);
+    assert!(
+        cache
+            .get_analysis(&first)
+            .expect("first pending edit")
+            .custom_gain_db
+            .is_none()
+    );
     advance_slider_clock(Duration::from_millis(400), cx);
     workflow.dispatch(SelectAll, cx);
-    step_slider(&workflow, &slider, 0.1, cx);
+    wheel_gain(&workflow, 1, cx);
     advance_slider_clock(Duration::from_millis(100), cx);
     for path in [&first, &second] {
         assert!(
@@ -1146,9 +1530,27 @@ async fn integration_slider_overlapping_gain_selections_keep_latest_deadline(cx:
                 .is_none()
         );
     }
-    cx.read(|cx| assert_eq!(workflow.view.read(cx).pending_gain_paths.len(), 2));
+    assert_pending_gain(&workflow, &[first.clone(), second.clone()], cx);
     workflow.select(&second, cx);
-    step_slider(&workflow, &slider, -0.1, cx);
+    cx.read(|cx| {
+        assert_eq!(
+            workflow.view.read(cx).selected_paths(cx),
+            vec![second.clone()],
+            "pointer selects the edited second file"
+        );
+    });
+    // Selection does not release or submit the original batch edit.
+    assert_pending_gain(&workflow, &[first.clone(), second.clone()], cx);
+    for path in [&first, &second] {
+        assert!(
+            cache
+                .get_analysis(path)
+                .expect("batch remains pending")
+                .custom_gain_db
+                .is_none()
+        );
+    }
+    wheel_gain(&workflow, -1, cx);
     cx.read(|cx| {
         let view = workflow.view.read(cx);
         assert_eq!(view.pending_gain_paths.as_slice(), std::slice::from_ref(&second));
@@ -2779,31 +3181,18 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
     });
 }
 
-/// Persists Change-only gain through the real subscription, restarting its deadline without an initial write.
+/// Debounces real waveform-wheel gain edits, restarting the deadline without an initial write or slider Release.
 #[gpui_kit::test]
-async fn integration_slider_gain_change_only_restarts_debounce_and_persists(cx: &mut TestAppContext) {
+async fn integration_slider_gain_wheel_restarts_debounce_and_persists(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
     let source = workflow.copy("sine_stereo_44100_16.wav", "change-only.wav");
     workflow.add(vec![source.clone()], cx);
     workflow.idle(cx).await;
     workflow.select(&source, cx);
+    workflow.preview(&source, cx).await;
     let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
     let cache = workflow_cache(&workflow, cx);
-    let counts = Rc::new(Cell::new((0_usize, 0_usize)));
-    let recorded = Rc::clone(&counts);
-    let _subscription = cx
-        .update_window(workflow.window, |_, window, cx| {
-            workflow.view.update(cx, |_, cx| {
-                cx.subscribe_in(&slider, window, move |_, _, event: &SliderEvent, _, _| {
-                    let (changes, releases) = recorded.get();
-                    recorded.set(match event {
-                        SliderEvent::Change(_) => (changes + 1, releases),
-                        SliderEvent::Release(_) => (changes, releases + 1),
-                    });
-                })
-            })
-        })
-        .expect("observe slider events beside the production subscriber");
+    let events = SliderEvents::subscribe(&workflow, &slider, cx);
     advance_slider_clock(Duration::from_millis(600), cx);
     cx.read(|cx| {
         let view = workflow.view.read(cx);
@@ -2817,9 +3206,17 @@ async fn integration_slider_gain_change_only_restarts_debounce_and_persists(cx: 
             .custom_gain_db
             .is_none()
     );
-    step_slider(&workflow, &slider, 0.1, cx);
+    wheel_gain(&workflow, 1, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&source), cx);
+    assert!(
+        cache
+            .get_analysis(&source)
+            .expect("first wheel edit is pending")
+            .custom_gain_db
+            .is_none()
+    );
     advance_slider_clock(Duration::from_millis(400), cx);
-    step_slider(&workflow, &slider, 0.1, cx);
+    wheel_gain(&workflow, 1, cx);
     advance_slider_clock(Duration::from_millis(100), cx);
     cx.read(|cx| {
         let view = workflow.view.read(cx);
@@ -2855,12 +3252,15 @@ async fn integration_slider_gain_change_only_restarts_debounce_and_persists(cx: 
         assert!(view.gain_store_task.is_none());
     });
     wait_for_gain(&workflow, &source, Some(0.2), cx).await;
-    assert_eq!(counts.get(), (2, 0), "semantic steps emit no pointer Release");
+    assert!(
+        events.events.borrow().is_empty(),
+        "wheel edits emit no slider notifications"
+    );
 }
 
-/// Checks both Change-only targets before mode switches or quit can conceal a missing debounce save.
+/// Holds each real target gesture through its restarted deadline before any Release or mode-switch save.
 #[gpui_kit::test]
-fn integration_slider_targets_change_only_restart_debounce_and_persist(cx: &mut TestAppContext) {
+fn integration_slider_targets_unfinished_gestures_restart_debounce_and_persist(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
     for mode in [NormalizeMode::Peak, NormalizeMode::Loudness] {
         let slider = choose_target(&workflow, mode, cx);
@@ -2868,13 +3268,20 @@ fn integration_slider_targets_change_only_restart_debounce_and_persist(cx: &mut 
         let delta = -crate::normalization::target_range(mode).step;
         let path = workflow.paths.data().join(crate::settings::SETTINGS_FILE_NAME);
         let initial_file = fs::read(&path).ok();
-        step_slider(&workflow, &slider, 0.0, cx);
         advance_slider_clock(Duration::from_millis(600), cx);
         cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
         assert_eq!(fs::read(&path).ok(), initial_file);
-        step_slider(&workflow, &slider, delta, cx);
+        let events = SliderEvents::subscribe(&workflow, &slider, cx);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "targets use the slider's bounded f32 domain"
+        )]
+        let initial = before as f32;
+        let _first_press = press_target(&workflow, mode, initial + delta, cx);
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_some()));
+        assert_eq!(fs::read(&path).ok(), initial_file);
         advance_slider_clock(Duration::from_millis(400), cx);
-        step_slider(&workflow, &slider, delta, cx);
+        let press = move_target(&workflow, mode, delta.mul_add(2.0, initial), cx);
         advance_slider_clock(Duration::from_millis(100), cx);
         assert!((saved_target(&workflow, mode) - before).abs() < 1e-6);
         cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_some()));
@@ -2894,6 +3301,11 @@ fn integration_slider_targets_change_only_restart_debounce_and_persist(cx: &mut 
                 "no mode-switch save hides the regression"
             );
         });
+        assert!(
+            events.events.borrow().iter().all(|event| !event.released),
+            "no Release can conceal debounce"
+        );
+        release_slider(&workflow, press, cx);
     }
 }
 
@@ -2990,9 +3402,20 @@ async fn integration_slider_pending_gain_tracks_selection_multiselection_remove_
     workflow.add(vec![first.clone(), second.clone()], cx);
     workflow.idle(cx).await;
     workflow.select(&first, cx);
-    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
-    step_slider(&workflow, &slider, 0.1, cx);
+    workflow.preview(&first, cx).await;
+    wheel_gain(&workflow, 1, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&first), cx);
+    assert_stored_gain(&workflow, &first, None, cx);
     workflow.select(&second, cx);
+    cx.read(|cx| {
+        assert_eq!(
+            workflow.view.read(cx).selected_paths(cx),
+            vec![second.clone()],
+            "pointer selects the second file before debounce"
+        );
+    });
+    assert_pending_gain(&workflow, std::slice::from_ref(&first), cx);
+    assert_stored_gain(&workflow, &first, None, cx);
     advance_slider_clock(Duration::from_millis(500), cx);
     wait_for_gain(&workflow, &first, Some(0.1), cx).await;
     assert!(
@@ -3004,8 +3427,14 @@ async fn integration_slider_pending_gain_tracks_selection_multiselection_remove_
     );
     workflow.dispatch(SelectAll, cx);
     cx.read(|cx| assert_eq!(workflow.view.read(cx).selected_paths(cx).len(), 2));
-    step_slider(&workflow, &slider, 0.2, cx);
+    wheel_gain(&workflow, 2, cx);
+    assert_pending_gain(&workflow, &[first.clone(), second.clone()], cx);
+    assert_stored_gain(&workflow, &first, Some(0.1), cx);
+    assert_stored_gain(&workflow, &second, None, cx);
     workflow.select(&first, cx);
+    assert_pending_gain(&workflow, &[first.clone(), second.clone()], cx);
+    assert_stored_gain(&workflow, &first, Some(0.1), cx);
+    assert_stored_gain(&workflow, &second, None, cx);
     workflow.dispatch(RemoveSelected, cx);
     wait_for_gain(&workflow, &first, Some(0.2), cx).await;
     wait_for_gain(&workflow, &second, Some(0.2), cx).await;
@@ -3015,7 +3444,9 @@ async fn integration_slider_pending_gain_tracks_selection_multiselection_remove_
             std::slice::from_ref(&second)
         );
     });
-    step_slider(&workflow, &slider, 0.1, cx);
+    wheel_gain(&workflow, 1, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&second), cx);
+    assert_stored_gain(&workflow, &second, Some(0.2), cx);
     workflow.dispatch(ClearList, cx);
     wait_for_gain(&workflow, &second, Some(0.3), cx).await;
     advance_slider_clock(Duration::from_millis(600), cx);
@@ -3036,16 +3467,24 @@ async fn integration_slider_gain_reset_cancels_pending_change_and_persists_clear
     workflow.add(vec![source.clone()], cx);
     workflow.idle(cx).await;
     workflow.select(&source, cx);
-    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
-    step_slider(&workflow, &slider, 0.2, cx);
+    workflow.preview(&source, cx).await;
+    cx.update_window(workflow.window, |_, window, cx| {
+        window
+            .within(control_ids::GAIN_TRACK)
+            .click(("slider-thumb", 0_u32), cx);
+    })
+    .expect("focus gain before wheel edits without changing it");
+    cx.run_until_parked();
+    wheel_gain(&workflow, 2, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&source), cx);
+    assert_stored_gain(&workflow, &source, None, cx);
     advance_slider_clock(Duration::from_millis(500), cx);
     wait_for_gain(&workflow, &source, Some(0.2), cx).await;
-    step_slider(&workflow, &slider, 0.1, cx);
-    cx.update_window(workflow.window, |_, window, cx| {
-        window.double_click(control_ids::GAIN_TRACK, cx);
-    })
-    .expect("reset pending gain through the production control");
-    cx.run_until_parked();
+    wheel_gain(&workflow, 1, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&source), cx);
+    assert_stored_gain(&workflow, &source, Some(0.2), cx);
+    let primary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+    workflow.menu_key(&format!("{primary}-0"), cx);
     cx.read(|cx| {
         let view = workflow.view.read(cx);
         assert!(view.selected_record(cx).expect("reset source").custom_gain_db.is_none());
@@ -3071,8 +3510,10 @@ async fn integration_slider_pending_gain_survives_replacement_plan(cx: &mut Test
     workflow.add(vec![source.clone()], cx);
     workflow.idle(cx).await;
     workflow.select(&source, cx);
-    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
-    step_slider(&workflow, &slider, 0.1, cx);
+    workflow.preview(&source, cx).await;
+    wheel_gain(&workflow, 1, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&source), cx);
+    assert_stored_gain(&workflow, &source, None, cx);
     let folder = workflow.directory.path().join("replacement");
     fs::create_dir(&folder).expect("replacement folder");
     fs::copy(test_fixtures::fixture("sine_mono_44100_16.wav"), folder.join("new.wav")).expect("replacement source");
@@ -3117,24 +3558,35 @@ async fn integration_slider_pending_gain_survives_replacement_plan(cx: &mut Test
 fn integration_slider_target_reset_and_mode_switch_flush_pending_changes(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
     for mode in [NormalizeMode::Peak, NormalizeMode::Loudness] {
-        let slider = choose_target(&workflow, mode, cx);
-        let delta = -crate::normalization::target_range(mode).step;
-        step_slider(&workflow, &slider, delta, cx);
-        double_click_slider(&workflow, control_ids::NORMALIZE_TARGET, cx);
-        let default = f64::from(crate::normalization::target_range(mode).default);
+        choose_target(&workflow, mode, cx);
+        let range = crate::normalization::target_range(mode);
+        let delta = -range.step;
+        let before = saved_target(&workflow, mode);
+        let press = press_target(&workflow, mode, range.default + delta, cx);
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_some()));
+        assert!((saved_target(&workflow, mode) - before).abs() < 1e-6);
+        let primary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+        workflow.menu_key(&format!("{primary}-0"), cx);
+        let default = f64::from(range.default);
         assert!(
             (saved_target(&workflow, mode) - default).abs() < 1e-6,
             "{mode:?} reset saved {} instead of {default}",
             saved_target(&workflow, mode)
         );
         cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
-        step_slider(&workflow, &slider, delta, cx);
+        release_slider(&workflow, press, cx);
+        advance_slider_clock(Duration::from_millis(600), cx);
+        assert!((saved_target(&workflow, mode) - default).abs() < 1e-6);
+        let press = press_target(&workflow, mode, range.default + delta, cx);
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_some()));
+        assert!((saved_target(&workflow, mode) - default).abs() < 1e-6);
         let other = match mode {
             NormalizeMode::Peak => NormalizeMode::Loudness,
             NormalizeMode::Loudness => NormalizeMode::Peak,
         };
-        choose_target(&workflow, other, cx);
+        switch_pending_target_mode(&workflow, other, cx);
         assert!((saved_target(&workflow, mode) - (default + f64::from(delta))).abs() < 1e-6);
+        release_slider(&workflow, press, cx);
         cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
         advance_slider_clock(Duration::from_millis(600), cx);
         assert!((saved_target(&workflow, mode) - (default + f64::from(delta))).abs() < 1e-6);
@@ -3149,12 +3601,21 @@ async fn integration_slider_quit_flushes_pending_gain_and_target(cx: &mut TestAp
     workflow.add(vec![source.clone()], cx);
     workflow.idle(cx).await;
     workflow.select(&source, cx);
-    let gain = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
-    step_slider(&workflow, &gain, 0.1, cx);
-    let peak = choose_target(&workflow, NormalizeMode::Peak, cx);
-    step_slider(&workflow, &peak, -0.1, cx);
-    let loudness = choose_target(&workflow, NormalizeMode::Loudness, cx);
-    step_slider(&workflow, &loudness, -0.5, cx);
+    workflow.preview(&source, cx).await;
+    wheel_gain(&workflow, 1, cx);
+    choose_target(&workflow, NormalizeMode::Peak, cx);
+    let peak_before = saved_target(&workflow, NormalizeMode::Peak);
+    let peak_press = press_target(&workflow, NormalizeMode::Peak, -0.1, cx);
+    cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_some()));
+    assert!((saved_target(&workflow, NormalizeMode::Peak) - peak_before).abs() < 1e-6);
+    switch_pending_target_mode(&workflow, NormalizeMode::Loudness, cx);
+    assert!((saved_target(&workflow, NormalizeMode::Peak) + 0.1).abs() < 1e-6);
+    release_slider(&workflow, peak_press, cx);
+    let loudness_before = saved_target(&workflow, NormalizeMode::Loudness);
+    let _loudness_press = press_target(&workflow, NormalizeMode::Loudness, -14.5, cx);
+    assert_pending_gain(&workflow, std::slice::from_ref(&source), cx);
+    assert_stored_gain(&workflow, &source, None, cx);
+    assert!((saved_target(&workflow, NormalizeMode::Loudness) - loudness_before).abs() < 1e-6);
     cx.read(|cx| {
         let view = workflow.view.read(cx);
         assert!(view.gain_store_task.is_some());
