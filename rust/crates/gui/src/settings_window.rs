@@ -190,6 +190,7 @@ impl SettingsView {
         let minimum_input = cx.new(|cx| InputState::new(window, cx));
         let maximum_input = cx.new(|cx| InputState::new(window, cx));
         let subscriptions = vec![
+            crate::theme::observe_system_reduce_motion(window, cx),
             cx.observe_window_bounds(window, |_, window, cx| {
                 cx.emit(SettingsEvent::Resized(window.bounds().size));
             }),
@@ -796,6 +797,28 @@ mod integration_tests {
             .expect("opens the settings view")
         });
         OpenedSettings { handle: window, view }
+    }
+
+    /// Reactivating retained windows never replaces an explicit application motion override.
+    /// Native preference probing is deliberately disabled by the framework's test scheduler.
+    #[gpui_kit::test]
+    fn window_activation_preserves_explicit_motion_preferences(cx: &mut TestAppContext) {
+        let first = open_settings(cx);
+        let second = open_settings(cx);
+        for (window, preference, reduced) in [
+            (first.handle, gpui_kit::base::ReduceMotionPreference::Reduce, true),
+            (second.handle, gpui_kit::base::ReduceMotionPreference::Allow, false),
+        ] {
+            cx.update(|cx| gpui_kit::base::set_reduce_motion_preference(preference, cx));
+            cx.update_window(window, |_, window, _| window.activate_window())
+                .expect("activates the production settings window");
+            cx.run_until_parked();
+            cx.update_window(window, |_, window, cx| {
+                assert!(window.is_window_active());
+                assert_eq!(cx.reduce_motion(), reduced);
+            })
+            .expect("retains the explicit preference after activation");
+        }
     }
 
     #[gpui_kit::test]

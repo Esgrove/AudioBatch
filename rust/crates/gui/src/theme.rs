@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode};
-use gpui_kit::{AnyView, App, Hsla, Rgba, SharedString, Window, hsla, rgba};
+use gpui_kit::{AnyView, App, Context, Hsla, Rgba, SharedString, Subscription, Window, hsla, rgba};
 
 /// Proportional text font.
 pub const TEXT_FONT: &str = "Roboto";
@@ -180,6 +180,16 @@ pub const fn black(alpha: f32) -> Hsla {
 pub fn tooltip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let text = text.into();
     move |window, cx| Tooltip::new(text.clone()).build(window, cx)
+}
+
+/// Refreshes the system motion preference when this window becomes active.
+/// The owner retains the subscription, and explicit application overrides remain authoritative.
+pub fn observe_system_reduce_motion<T: 'static>(window: &mut Window, cx: &Context<T>) -> Subscription {
+    cx.observe_window_activation(window, |_, window, cx| {
+        if window.is_window_active() {
+            gpui_kit::base::apply_system_reduce_motion(cx);
+        }
+    })
 }
 
 /// Embeds the fonts and applies the palette, for both light and dark system appearance,

@@ -179,6 +179,7 @@ impl ChainView {
         let preset_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let preset_name = cx.new(|cx| InputState::new(window, cx).placeholder("Preset name"));
         let subscriptions = vec![
+            crate::theme::observe_system_reduce_motion(window, cx),
             cx.subscribe_in(&preset_select, window, Self::on_preset_selected),
             cx.subscribe_in(&preset_name, window, Self::on_preset_name_input),
         ];

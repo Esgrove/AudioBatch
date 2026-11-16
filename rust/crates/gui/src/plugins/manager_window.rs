@@ -18,7 +18,8 @@ use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::{
     Context, Div, ElementId, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    px,
 };
 
 use super::labels::VendorGroup;
@@ -101,6 +102,7 @@ pub struct ManagerSnapshot {
 pub struct ManagerView {
     focus_handle: FocusHandle,
     snapshot: ManagerSnapshot,
+    _motion_subscription: Subscription,
 }
 
 impl ManagerView {
@@ -108,7 +110,11 @@ impl ManagerView {
     pub fn new(snapshot: ManagerSnapshot, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        Self { focus_handle, snapshot }
+        Self {
+            focus_handle,
+            snapshot,
+            _motion_subscription: crate::theme::observe_system_reduce_motion(window, cx),
+        }
     }
 
     /// Shows a new snapshot.

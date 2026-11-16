@@ -300,6 +300,7 @@ impl AppView {
             subscriptions: slider_subscriptions,
         } = new_sliders(&settings, window, cx);
         let mut subscriptions = vec![
+            crate::theme::observe_system_reduce_motion(window, cx),
             cx.subscribe_in(&table, window, Self::on_table_event),
             // Batch selection changes can notify without moving the table cursor or preview anchor.
             // Menu synchronization compares eligibility before publishing any update.
