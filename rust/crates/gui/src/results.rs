@@ -343,6 +343,14 @@ pub struct RowMenuState {
     pub normalize_target: String,
 }
 
+/// Gain provenance captured before a run can read the cache, without retaining any gain values or artifacts.
+/// Only edits pending or still writing at that boundary, and revisions made later, protect scan adoption.
+#[derive(Debug, Clone, Default)]
+pub struct AnalysisGainSnapshot {
+    revision: u64,
+    unsettled: HashMap<PathBuf, u64>,
+}
+
 /// An explicit gain choice belonging only to one version of a file.
 #[derive(Clone)]
 struct CustomGainEdit {
@@ -354,16 +362,9 @@ struct CustomGainEdit {
     completion: Option<GainWriteCompletion>,
 }
 
-/// Gain provenance captured before a run can read the cache, without retaining any gain values or artifacts.
-/// Only edits pending or still writing at that boundary, and revisions made later, protect scan adoption.
-#[derive(Debug, Clone, Default)]
-pub struct AnalysisGainSnapshot {
-    revision: u64,
-    unsettled: HashMap<PathBuf, u64>,
-}
-
 /// One column of the results table.
 struct ColumnSpec {
+    /// Stable column identity used independently of its display position.
     key: ColumnKey,
     /// Short title for the header.
     title: &'static str,

@@ -44,9 +44,13 @@ pub(super) struct RunProgress {
     pub(super) finished: usize,
     /// True once the run has completed.
     pub(super) completed: bool,
+    /// Monotonic start time used to report the completed run's duration.
     started: Instant,
+    /// Successful results measured during this run, rather than reused from the cache.
     analyzed: usize,
+    /// Successful results reused from the cache during this run.
     cached: usize,
+    /// Results whose analysis failed during this run.
     failed: usize,
     /// Explicit gain revisions that this run's cache reads might not include.
     gains: AnalysisGainSnapshot,
