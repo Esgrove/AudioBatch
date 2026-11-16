@@ -105,7 +105,8 @@ Debug and Release packaging use the same bundle path, so the last build selects 
 `./test.sh` requires an existing build-tree bundle.
 Every script provides `-h` and `--help`.
 
-The packaged realtime checks require macOS, nightly Rust, uv, jq, and a matching Homebrew LLVM runtime.
+The packaged realtime checks require macOS, nightly Rust, uv, jq,
+and a Homebrew LLVM runtime with the same LLVM major.minor version as the nightly compiler.
 They verify allocation and mutex detector controls separately from required-clean callback cases.
 Passing these exercised scenarios does not establish audio deadlines or arbitrary host compatibility.
 

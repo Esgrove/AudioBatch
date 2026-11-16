@@ -199,7 +199,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       # Keep the resolved nightly identity even if its LLVM does not match Homebrew's runtime.
-      # rtsan.sh must fail on a version mismatch or an unusable startup runtime, never skip the check.
+      # rtsan.sh must fail on an LLVM major.minor mismatch or an unusable startup runtime, never skip the check.
       - name: Record native sanitizer toolchain
         run: |
           {

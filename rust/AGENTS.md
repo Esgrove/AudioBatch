@@ -703,7 +703,8 @@ Mention the C++ application only when it matters for the implementation:
   which are not clean results.
   The build and diagnostics stay in `target/rtsan/`, and `--artifacts <directory>` selects where reports go.
   Run it after changing callback, renderer, or preview insert code.
-  A missing or mismatched runtime blocks the check, and the check proves no audio deadlines.
+  A missing runtime, or one whose LLVM major.minor version differs from the nightly compiler's, blocks the check.
+  The check proves no audio deadlines.
 - The callback benchmark is an ignored libtest case, `callback_benchmark::production_callback`.
   `../tests/callback_benchmark.py` compares paired baseline and candidate runs,
   following [`../docs/performance.md`](../docs/performance.md).

@@ -875,6 +875,20 @@ require_rust_notice_tools() {
     require_command jq "jq is required for the third-party notices."
 }
 
+# Returns success when clang's --version output ($2) has the same LLVM major.minor as Rust's LLVM version ($1).
+# The RealtimeSanitizer runtime interface is stable within a minor release,
+# so independently updated nightly Rust and Homebrew LLVM patch releases stay compatible.
+llvm_major_minor_matches() {
+    local rust_llvm="$1"
+    local clang_version="$2"
+    local version_pattern='^([0-9]+)\.([0-9]+)'
+    [[ "$rust_llvm" =~ $version_pattern ]] || return 1
+    local rust_major="${BASH_REMATCH[1]}" rust_minor="${BASH_REMATCH[2]}"
+    local clang_pattern='clang version ([0-9]+)\.([0-9]+)'
+    [[ "$clang_version" =~ $clang_pattern ]] || return 1
+    [ "${BASH_REMATCH[1]}" = "$rust_major" ] && [ "${BASH_REMATCH[2]}" = "$rust_minor" ]
+}
+
 # Enable calling functions directly as arguments:
 # ./common.sh print_green "hello"
 # shellcheck disable=SC2128

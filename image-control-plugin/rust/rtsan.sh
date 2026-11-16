@@ -11,7 +11,8 @@ USAGE="Usage: $0 [OPTIONS]
 Run process-isolated native RealtimeSanitizer checks against ImageControl RS build-tree packages.
 VST3 is the default. CLAP and AU have independent hosts and callback evidence.
 No dependency reports are suppressed. These checks do not establish audio deadlines.
-Requires macOS, nightly Rust, uv, jq, and a matching Homebrew LLVM runtime.
+Requires macOS, nightly Rust, uv, jq,
+and a Homebrew LLVM runtime with the same LLVM major.minor version as the nightly compiler.
 
 OPTIONS:
     -h | --help
@@ -111,7 +112,8 @@ configure_toolchain() {
     RUST_VERSION=$(rustc +"$TOOLCHAIN" --version --verbose)
     local LLVM_VERSION
     LLVM_VERSION=$(printf '%s\n' "$RUST_VERSION" | rg '^LLVM version: ' | cut -d ' ' -f 3)
-    [[ $("$CLANG" --version) == *"clang version $LLVM_VERSION"* ]] || print_error_and_exit "Rust and clang LLVM versions must match"
+    llvm_major_minor_matches "$LLVM_VERSION" "$("$CLANG" --version)" ||
+           print_error_and_exit "Rust LLVM $LLVM_VERSION and clang must have the same LLVM major.minor version"
     HOST=$(printf '%s\n' "$RUST_VERSION" | rg '^host: ' | cut -d ' ' -f 2)
     case "$HOST" in
         aarch64-apple-darwin) ARCHITECTURE=arm64 ;;
@@ -134,7 +136,7 @@ configure_toolchain() {
     unset RUSTFLAGS RTSAN_OPTIONS DYLD_INSERT_LIBRARIES
     ARTIFACTS="$CARGO_TARGET_DIR/artifacts"
     mkdir -p "$ARTIFACTS"
-    printf '%s\n' "$RUST_VERSION" "Runtime: $RUNTIME" "Formats: $FORMAT" > "$ARTIFACTS/versions.txt"
+    printf '%s\n' "$RUST_VERSION" "$("$CLANG" --version)" "Runtime: $RUNTIME" "Formats: $FORMAT" > "$ARTIFACTS/versions.txt"
 }
 
 # Compile the actual cdylib and AU static archive with the same target, runtime, and instrumentation as the hosts.

@@ -8,7 +8,8 @@ source "$DIR/common.sh"
 USAGE="Usage: $0 [OPTIONS]
 
 Build and run process-isolated native Rust RealtimeSanitizer contracts.
-Requires an installed nightly Rust compiler and matching Homebrew LLVM runtime.
+Requires an installed nightly Rust compiler
+and a Homebrew LLVM runtime with the same LLVM major.minor version.
 Only macOS hosts with native realtime sanitizer support are accepted.
 
 OPTIONS:
@@ -70,7 +71,8 @@ run_realtime_checks() {
     [ -x "$CLANG" ] || print_error_and_exit "Matching Homebrew LLVM clang is missing"
     LLVM_VERSION=$(printf '%s\n' "$RUST_VERSION" | rg '^LLVM version: ' | cut -d ' ' -f 3)
     CLANG_VERSION=$("$CLANG" --version)
-    [[ "$CLANG_VERSION" == *"clang version $LLVM_VERSION"* ]] || print_error_and_exit "Rust LLVM $LLVM_VERSION and clang must match"
+    llvm_major_minor_matches "$LLVM_VERSION" "$CLANG_VERSION" ||
+           print_error_and_exit "Rust LLVM $LLVM_VERSION and clang must have the same LLVM major.minor version"
     RUNTIME=$("$CLANG" --print-file-name=libclang_rt.rtsan_osx_dynamic.dylib)
     [ -f "$RUNTIME" ] || print_error_and_exit "Matching native RTSan startup runtime is missing"
     SYMBOLIZER="$(dirname "$CLANG")/llvm-symbolizer"
