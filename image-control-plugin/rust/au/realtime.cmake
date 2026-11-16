@@ -48,4 +48,4 @@ target_link_options(ImageControlRSAURealtime PRIVATE -fsanitize=realtime)
 target_link_libraries(
     ImageControlRSAURealtime PRIVATE "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation"
 )
-add_dependencies(ImageControlRSAURealtime ImageControlRSAU)
+add_dependencies(ImageControlRSAURealtime ImageControlRSAUFinalize)

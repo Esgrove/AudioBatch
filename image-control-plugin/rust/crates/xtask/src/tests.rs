@@ -307,7 +307,7 @@ fn au_commands_match_the_rust_build_and_sibling_cmake_contract() {
                 OsString::from("--config"),
                 OsString::from(profile.cmake_name()),
                 OsString::from("--target"),
-                OsString::from("ImageControlRSAU")
+                OsString::from("ImageControlRSAUFinalize")
             ]
         );
         assert!(commands.next().is_none());

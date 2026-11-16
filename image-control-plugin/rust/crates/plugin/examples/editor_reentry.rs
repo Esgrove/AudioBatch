@@ -1156,6 +1156,8 @@ mod native {
             || editor.host.child_size().is_ok_and(|size| close_size(size, baseline)),
             "distinct native reentry baseline",
         )?;
+        // Native child geometry precedes the deferred Iced layout used by pointer hit testing.
+        application.settle();
         let initial_size = editor.host.child_size()?;
         let initial_gain = component.gain();
         let observer = if mode == Mode::RemoveDuringResize {

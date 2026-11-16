@@ -135,14 +135,15 @@ target_link_libraries(
         "-lobjc"
         "-liconv"
 )
-add_custom_command(
-    TARGET ImageControlRSAU
-    POST_BUILD
-    # Upstream appends .component to its configured identifier. Keep our persisted identity exact before signing.
-    COMMAND /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.esgrove.imagecontrol-rs-own.au"
+# CMake regenerates its placeholder plist during configuration, even without relinking the module.
+# Restore the complete wrapper metadata and signature on every packaging or qualification build.
+add_custom_target(
+    ImageControlRSAUFinalize
+    COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_BINARY_DIR}/ImageControlRSAU-build-helper-output/auv2_Info.plist"
             "$<TARGET_BUNDLE_DIR:ImageControlRSAU>/Contents/Info.plist"
     COMMAND /usr/bin/codesign --force --sign - --timestamp=none "$<TARGET_BUNDLE_DIR:ImageControlRSAU>"
     COMMAND /usr/bin/codesign --verify --deep --strict "$<TARGET_BUNDLE_DIR:ImageControlRSAU>"
+    DEPENDS ImageControlRSAU
     VERBATIM
 )
 
@@ -181,7 +182,7 @@ if(IMAGE_CONTROL_AU_BUILD_TESTS)
             -Wimplicit-fallthrough
             -Werror
     )
-    add_dependencies(ImageControlRSAUHost ImageControlRSAU)
+    add_dependencies(ImageControlRSAUHost ImageControlRSAUFinalize)
     add_test(NAME ImageControlRSAUHost COMMAND ImageControlRSAUHost --bundle "${IMAGE_CONTROL_AU_BUNDLE}")
     set_tests_properties(ImageControlRSAUHost PROPERTIES TIMEOUT 90 LABELS "au;qualification")
     add_test(

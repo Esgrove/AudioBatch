@@ -19,7 +19,7 @@ const BUNDLE_ID: &str = "com.esgrove.imagecontrol-rs-own";
 /// Matching minimum deployment target for the Rust archive and the native AU wrapper.
 const MINIMUM_MACOS_VERSION: &str = "15.0";
 /// The sibling `CMake` project exposes one native, single-configuration AU target.
-const AU_TARGET: &str = "ImageControlRSAU";
+const AU_TARGET: &str = "ImageControlRSAUFinalize";
 
 /// Supported native packaging platforms, also explicit in path and command tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
