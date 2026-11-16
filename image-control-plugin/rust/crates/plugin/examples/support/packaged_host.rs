@@ -562,8 +562,12 @@ fn editor_lifecycle(
     let second_editor = EditorWindow::open(ui, second, "ImageControl RS packaged host B", None, None)?;
     application.verify_delegate()?;
     run_stage(ui, worker, 2)?;
+    // Synthetic clicks at fixed header positions depend on the desktop session, so CI runners skip them.
+    // The editor lifecycle and its realtime callbacks are still checked there.
     #[cfg(target_os = "macos")]
-    exercise_monitoring_taps(ui, first, worker)?;
+    if std::env::var_os("CI").is_none() {
+        exercise_monitoring_taps(ui, first, worker)?;
+    }
     ensure!(
         !first_editor.is_closed() && !second_editor.is_closed(),
         "editor closed before lifecycle observation"
