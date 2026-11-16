@@ -408,8 +408,8 @@ Use explicit application packages for scoped Cargo work, because root `--workspa
 After making code changes, always run:
 
 ```shell
-cargo clippy --fix --allow-dirty --all-targets
-cargo fmt
+./lint.sh
+./format.sh
 ./test.sh --unit
 ./test.sh --gui-integration
 ./test.sh --optimized
@@ -420,13 +420,15 @@ cargo fmt
 The GUI and CLI integration tiers retain diagnostics under `target/integration-artifacts/`,
 and accept `--artifacts <directory>`.
 The optimized tier runs release core tests and adds the CLI normalization subset on Windows.
+`./test.sh -D` or `./test.sh --doc` runs application documentation tests not covered by nextest.
 The CLI tier builds the executable and runs the shared Python contracts through uv.
 Raw `cargo nextest run` includes the GUI integration workflows but not the Python suite.
 `cargo test` also runs the Rust workspace tests.
-`./lint.sh` runs the same clippy command with `-D warnings`, also on the fuzz crate,
+`./lint.sh` checks application packages and the fuzz crate with Clippy and `-D warnings`,
 and `./lint.sh --check` reports the warnings without applying fixes.
-CI runs `cargo clippy --all-targets -- -D warnings` and the tests on macOS and Windows,
-and `cargo fmt --check` and a coverage run on macOS.
+`-a` or `--application-only` omits the separate fuzz crate when another check owns it.
+CI uses the lint and format scripts, with a separate macOS fuzz lint step,
+and runs the tests on macOS and Windows and coverage on macOS.
 
 Other commands:
 

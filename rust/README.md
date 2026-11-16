@@ -487,12 +487,14 @@ AUDIOBATCH_GUI_SNAPSHOT=target/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatc
 ./test.sh --gui-integration
 ./test.sh --optimized
 ./test.sh --cli-integration
+./test.sh --doc
 
 # Run every workspace test together
 cargo nextest run
 ```
 
-`test.sh` defaults to the workspace unit and service tier, excluding the nonvisual GUI integration workflows.
+`test.sh` defaults to the application unit and service tier, excluding the nonvisual GUI integration workflows.
+`--doc` or `-D` runs application documentation tests not covered by nextest.
 The GUI tier saves `target/integration-artifacts/gui.log` and propagates failures through its logging pipeline.
 The optimized tier runs release core tests, adding the CLI normalization subset on Windows.
 The CLI tier builds the debug executable and runs the shared contracts through uv with isolated application storage.

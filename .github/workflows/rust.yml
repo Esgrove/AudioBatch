@@ -113,7 +113,8 @@ jobs:
 
       # The tests find the bundle in test-plugin/cmake-build-release, and fail instead of skipping when CI is set and it is missing.
       - name: Build test plugin
-        run: ../test-plugin/build.sh
+        working-directory: test-plugin
+        run: ./build.sh
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -133,12 +134,10 @@ jobs:
 
       - name: Check formatting
         if: runner.os == 'macOS'
-        run: |
-          cargo fmt --all --check
-          cargo fmt --manifest-path fuzz/Cargo.toml --check
+        run: ./format.sh --check
 
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: ./lint.sh --check --application-only
 
       # The fuzz crate is its own workspace, and its targets build on stable outside cargo-fuzz.
       - name: Lint fuzz targets
@@ -215,7 +214,8 @@ jobs:
 
       # Build only into the fixture tree, never install a plugin or open a physical audio device.
       - name: Build native test plugin
-        run: ../test-plugin/build.sh 2>&1 | tee target/rtsan/artifacts/native-plugin-build.log
+        working-directory: test-plugin
+        run: ./build.sh 2>&1 | tee "$GITHUB_WORKSPACE/rust/target/rtsan/artifacts/native-plugin-build.log"
 
       # First-party audio data callbacks must pass strictly, independently of native/error-ownership audits.
       - name: Require clean first-party audio callbacks
@@ -384,7 +384,8 @@ jobs:
 
       # The tests find the bundle in test-plugin/cmake-build-release, and fail instead of skipping when CI is set and it is missing.
       - name: Build test plugin
-        run: ../test-plugin/build.sh
+        working-directory: test-plugin
+        run: ./build.sh
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable

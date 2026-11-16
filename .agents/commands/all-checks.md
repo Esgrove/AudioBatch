@@ -111,14 +111,14 @@ Keep sanitizer configurations separate, and retain fuzz artifacts without changi
 First run `./build.sh` from `test-plugin/` so real JUCE VST3 tests cannot silently skip.
 Then, from `rust/`:
 
-1. `cargo build --workspace --bins` and `./build.sh` for Debug binaries and Release packaging without installation.
+1. `./build.sh --debug` and `./build.sh` for Debug and Release packaging without installation.
 2. On macOS, `cargo build -p audiobatch-gui --features snapshot` for the feature omitted by ordinary builds.
-3. `./lint.sh --check`, covering both the workspace and the separately excluded fuzz crate.
+3. `./lint.sh --check`, covering the application packages and the separately excluded fuzz crate.
 4. `./test.sh --unit`.
 5. `./test.sh --gui-integration`.
 6. `./test.sh --optimized`.
 7. `./test.sh --cli-integration`.
-8. `cargo test --workspace --doc` for documentation tests not run by nextest.
+8. `./test.sh --doc` for documentation tests not run by nextest.
 9. `cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions`.
 
 Set `AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES=1` on test invocations when the complete corpus is available.

@@ -18,12 +18,16 @@ OPTIONS: All options are optional
         Only report the warnings without applying fixes.
         Exit with code 1 if clippy reports any warning. Intended for CI.
 
+    -a | --application-only
+        Lint only the application packages, leaving fuzz targets to a separate check.
+
     -v | --verbose
         Display commands being executed.
 "
 
 parse_arguments() {
     CHECK=false
+    APPLICATION_ONLY=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -32,6 +36,9 @@ parse_arguments() {
                 ;;
             -c | --check)
                 CHECK=true
+                ;;
+            -a | --application-only)
+                APPLICATION_ONLY=true
                 ;;
             -v | --verbose)
                 set -x
@@ -59,9 +66,11 @@ lint_sources() {
     print_magenta "Running cargo clippy on the application packages..."
     cargo clippy "${APPLICATION_PACKAGE_ARGS[@]}" --all-targets "${FIX_ARGS[@]}" -- -D warnings
 
-    # The fuzz crate is its own workspace, and its targets build on stable outside cargo-fuzz.
-    print_magenta "Running cargo clippy on the fuzz crate..."
-    cargo clippy --manifest-path fuzz/Cargo.toml --all-targets "${FIX_ARGS[@]}" -- -D warnings
+    if [ "$APPLICATION_ONLY" = false ]; then
+        # The fuzz crate is its own workspace, and its targets build on stable outside cargo-fuzz.
+        print_magenta "Running cargo clippy on the fuzz crate..."
+        cargo clippy --manifest-path fuzz/Cargo.toml --all-targets "${FIX_ARGS[@]}" -- -D warnings
+    fi
 
     print_green "Clippy found no warnings"
 }

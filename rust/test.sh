@@ -25,6 +25,9 @@ OPTIONS: Choose at most one test tier
     -O | --optimized
         Run release core tests, plus the CLI normalization subset on Windows.
 
+    -D | --doc
+        Run documentation tests for the application packages.
+
     -i | --cli-integration
         Build the debug CLI and run its executable contracts through uv.
         CARGO_TARGET_DIR selects the build directory, defaulting to target/.
@@ -47,7 +50,7 @@ parse_arguments() {
             -h | --help)
                 print_usage_and_exit 0
                 ;;
-            -u | --unit | -g | --gui-integration | -O | --optimized | -i | --cli-integration)
+            -u | --unit | -g | --gui-integration | -O | --optimized | -D | --doc | -i | --cli-integration)
                 if [ -n "$TIER" ]; then
                     print_error_and_exit "Choose only one test tier."
                 fi
@@ -55,6 +58,7 @@ parse_arguments() {
                     -u | --unit) TIER=--unit ;;
                     -g | --gui-integration) TIER=--gui-integration ;;
                     -O | --optimized) TIER=--optimized ;;
+                    -D | --doc) TIER=--doc ;;
                     -i | --cli-integration) TIER=--cli-integration ;;
                 esac
                 ;;
@@ -105,6 +109,9 @@ run_tests() {
                 options=(-p audiobatch-cli -E 'package(audiobatch-core) | (package(audiobatch-cli) & test(run::test_run_analysis::normalize_))')
             fi
             cargo nextest run --release -p audiobatch-core "${options[@]}" --no-fail-fast
+            ;;
+        --doc)
+            cargo test "${APPLICATION_PACKAGE_ARGS[@]}" --doc
             ;;
         --cli-integration)
             require_command uv "uv not found in path, it runs the shared CLI integration suite"
