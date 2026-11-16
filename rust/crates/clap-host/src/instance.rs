@@ -28,6 +28,7 @@ use clack_host::plugin::{PluginInstance as ClackInstance, PluginInstanceError};
 use clack_host::prelude::*;
 use clack_host::process::PluginAudioProcessor;
 use clack_host::utils::ClapId;
+use plugin_host_core::compensated_latency;
 use thiserror::Error;
 
 use crate::host::{
@@ -533,13 +534,15 @@ impl PluginInstance {
     }
 
     /// Returns the current latency through the main-thread extension.
+    /// A report of 2^31 samples or more counts as no latency, the same rule the VST3 host applies,
+    /// so chains of either format compensate alike.
     #[must_use]
     pub fn latency_samples(&self, _ui: &UiThread) -> u32 {
         let mut parts = self.core.parts.borrow_mut();
         let handle = parts.plugin.plugin_handle();
         handle
             .get_extension::<PluginLatency>()
-            .map_or(0, |latency| latency.get(&handle))
+            .map_or(0, |latency| compensated_latency(latency.get(&handle)))
     }
 
     /// Returns the last audio-thread tail report. `u32::MAX` represents an infinite tail.

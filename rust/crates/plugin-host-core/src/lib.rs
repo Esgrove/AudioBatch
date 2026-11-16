@@ -5,6 +5,7 @@
 
 #[cfg(feature = "editor")]
 pub mod editor;
+pub mod latency;
 pub mod platform_events;
 pub mod thread;
 pub mod ui_bound;
@@ -14,6 +15,7 @@ mod test_helpers;
 
 #[cfg(feature = "editor")]
 pub use editor::{EditorCallbacks, NativeWindow, WindowError, WindowPosition, WindowSize};
+pub use latency::compensated_latency;
 pub use platform_events::pump_platform_events;
 pub use thread::{CallError, UiDispatcher, UiJob, UiJobs, UiThread, UiThreadError, ui_channel};
 pub use ui_bound::UiBound;

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crossbeam_queue::ArrayQueue;
+use plugin_host_core::compensated_latency;
 use thiserror::Error;
 use vst3::Steinberg::Vst::{
     BusDirections_, IAudioProcessor, IAudioProcessorTrait as _, IComponent, IComponentHandler, IComponentTrait as _,
@@ -652,10 +653,11 @@ impl PluginInstance {
     }
 
     /// Returns the latency the plugin reports, in samples.
+    /// A report of 2^31 samples or more counts as no latency, the way JUCE reads it in the C++ application.
     #[must_use]
     pub fn latency_samples(&self, _ui: &UiThread) -> u32 {
         // SAFETY: the processor is valid.
-        unsafe { self.core.parts.processor.getLatencySamples() }
+        compensated_latency(unsafe { self.core.parts.processor.getLatencySamples() })
     }
 
     /// Returns the tail length the plugin reports, in samples.
