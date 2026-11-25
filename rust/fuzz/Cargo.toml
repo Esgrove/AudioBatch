@@ -15,7 +15,7 @@ cargo-fuzz = true
 [dependencies]
 audiobatch-cli = { path = "../crates/cli" }
 audiobatch-core = { path = "../crates/core" }
-clap = "4.6.7"
+clap = "4.6.10"
 libfuzzer-sys = "0.4.13"
 serato-tags = { path = "../crates/serato" }
 tempfile = "3.27.0"

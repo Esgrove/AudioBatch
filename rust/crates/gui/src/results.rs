@@ -1822,7 +1822,7 @@ fn paint_activity_ring(bounds: Bounds<Pixels>, progress: f32, window: &mut Windo
 }
 
 /// Builds a full circle with the given builder, filled or stroked.
-fn circle_path(center_x: f32, center_y: f32, radius: f32, mut builder: PathBuilder) -> Option<gpui_kit::Path<Pixels>> {
+fn circle_path(center_x: f32, center_y: f32, radius: f32, mut builder: PathBuilder) -> Option<gpui_kit::Path> {
     let radii = point(px(radius), px(radius));
     builder.move_to(point(px(center_x + radius), px(center_y)));
     builder.arc_to(radii, px(0.0), false, true, point(px(center_x - radius), px(center_y)));
