@@ -15,12 +15,15 @@ Read [`image-control-plugin/AGENTS.md`](image-control-plugin/AGENTS.md) before c
 ## Agent Commands
 
 Reusable command prompts live in [`.agents/commands/`](.agents/commands/).
-`.cursor/commands` and `.claude/commands` link to that directory, so edit the canonical files only.
+`.cursor/commands`, `.claude/commands`, and `.opencode/commands` link to that directory, so edit the canonical files only.
 
 - `/all-checks [scope] [check-only]` runs the complete applicable verification suite and fixes found issues by default.
   Add `check-only` to report without applying fixes.
 - `/code-review [scope]` reviews current project code without editing.
   Add `changes` for local changes or `base=<ref>` for branch changes plus local work.
+- `/update-gpui-kit [version] [check-only]` moves the Rust workspace to a new gpui-kit release with its `gpui-pre` pins,
+  runs `cargo upgrade -i` and `cargo update`, and adapts the GUI to the release notes.
+  Add `check-only` to report without editing.
 - `/guidelines-review [scope]` applies small, behavior-preserving organization and style fixes.
   Add `check-only` to report without editing, or `changes` to limit cleanup to local changes.
 
@@ -136,6 +139,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
 - `.agents/rules/` holds the rules for the C++ sources of the C++ application, the test plugin, and ImageControl.
   `.claude/rules` is a symlink to it, and the `.mdc` files in `.cursor/rules/` are symlinks to its files,
   because Cursor reads only `.mdc` rules there.
+  OpenCode has no rules directory, so `opencode.json` loads `.agents/rules/*.md` through its `instructions` globs.
   Edit the canonical files in `.agents/rules/` only.
 - RealtimeSanitizer checks the audio callbacks of all three C++ and Rust projects on macOS with Homebrew LLVM:
   `cpp/sanitize.sh --realtime`, `rust/rtsan.sh`, and `image-control-plugin/sanitize.sh --realtime`.
