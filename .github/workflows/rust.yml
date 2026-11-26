@@ -150,7 +150,7 @@ jobs:
 
       - name: Set up uv
         if: ${{ !cancelled() }}
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
 
       - name: Install Homebrew LLVM and native build tools
         if: ${{ !cancelled() && runner.os == 'macOS' }}
