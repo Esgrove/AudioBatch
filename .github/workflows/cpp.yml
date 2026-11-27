@@ -70,7 +70,7 @@ jobs:
 
       - name: Set up uv
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
 
       - name: Get JUCE commit
         id: juce
